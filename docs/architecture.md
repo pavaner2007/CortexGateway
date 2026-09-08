@@ -1,4 +1,4 @@
-# Cortex Gateway — Phase 1 Architecture
+# Cortex Gateway — Architecture (Phase 1 + Phase 2)
 
 ## Overview
 
@@ -322,3 +322,195 @@ src/
 | `SECRET_KEY` | — | Application secret (**change this**) |
 | `LOG_LEVEL` | `INFO` | Loguru log level |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated CORS origins |
+
+---
+
+## Phase 2 — Unified Multi-LLM Gateway
+
+### Request Flow
+
+```
+Client
+   │
+   ▼ POST /api/v1/chat/completions
+RequestIDMiddleware           ← sets ContextVar (UUID v4)
+RequestLoggingMiddleware      ← logs method, path, status
+   │
+   ▼
+ChatCompletionRequest         ← Pydantic v2 validation
+   │
+   ▼
+chat.py (endpoint)            ← ZERO provider logic
+   │ Depends(get_registry)
+   ▼
+ChatService.complete()        ← orchestration only
+   │ registry.get(provider)
+   ▼
+ProviderRegistry              ← O(1) dict lookup
+   │
+   ├── raises InvalidProviderError if not registered
+   │
+   ▼
+BaseLLMProvider.chat(request, request_id)
+   │
+   ├── OpenAIProvider      → AsyncOpenAI SDK
+   ├── GeminiProvider      → google-generativeai SDK
+   └── GroqProvider        → AsyncGroq SDK
+               │
+               ▼
+       Provider API
+               │
+               ▼
+   Response normalization    ← inside each adapter
+               │
+               ▼
+   ChatCompletionResponse    ← Cortex schema
+   (identical shape for all providers)
+               │
+               ▼
+   RequestLoggingMiddleware  ← logs latency
+               │
+               ▼
+           Client
+```
+
+---
+
+### Provider Abstraction Design
+
+```python
+# All providers implement:
+class BaseLLMProvider(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str: ...          # canonical name: "openai", "groq", "gemini"
+
+    @abstractmethod
+    async def chat(request, request_id) -> ChatCompletionResponse: ...
+
+    @abstractmethod
+    async def health_check() -> bool: ...
+
+    @abstractmethod
+    async def list_models() -> list[str]: ...
+```
+
+**Key invariant**: Routes and `ChatService` only ever call `BaseLLMProvider` methods.
+Provider-specific SDK calls, payload transformations, and response parsing
+remain **exclusively** inside each provider adapter file.
+
+---
+
+### Provider Registry
+
+```
+ProviderRegistry (module-level singleton)
+    ├── _providers: dict[str, BaseLLMProvider]
+    │
+    ├── register(provider)   → dict insert, logged
+    ├── get(name)            → raises InvalidProviderError if absent
+    ├── is_registered(name)  → bool
+    ├── list_providers()     → [ProviderInfo] (no secrets)
+    └── provider_names       → sorted list of names
+
+Initialized in lifespan startup:
+    for each provider:
+        if api_key present AND enabled:
+            registry.register(Provider(api_key=...))
+        else:
+            log "skipped" (graceful — no crash)
+```
+
+---
+
+### Response Normalization
+
+Every provider adapter produces the same `ChatCompletionResponse`:
+
+```
+ChatCompletionResponse
+├── id               "ctx_" + 12 hex chars
+├── object           "chat.completion"
+├── created          Unix timestamp
+├── provider         "groq" | "gemini" | "openai"
+├── model            exact model string from provider
+├── choices[]
+│   ├── index        0-based
+│   ├── message
+│   │   ├── role     "assistant"
+│   │   └── content  text content
+│   └── finish_reason  "stop" | "length" | None
+├── usage
+│   ├── prompt_tokens     int | None
+│   ├── completion_tokens int | None
+│   └── total_tokens      int | None
+└── metadata
+    ├── request_id   from ContextVar (X-Request-ID)
+    └── latency_ms   provider request duration
+```
+
+**Token usage is Optional** — never fabricated. Gemini uses
+`candidates_token_count` (normalized to `completion_tokens` internally).
+
+---
+
+### Error Normalization
+
+```
+ProviderException (base)
+    │
+    ├── InvalidProviderError         code=INVALID_PROVIDER        HTTP 404
+    ├── ProviderDisabledError        code=PROVIDER_DISABLED        HTTP 503
+    ├── InvalidModelError            code=INVALID_MODEL           HTTP 400
+    ├── ProviderTimeoutError         code=PROVIDER_TIMEOUT        HTTP 504
+    ├── ProviderRateLimitError       code=PROVIDER_RATE_LIMITED   HTTP 429
+    ├── ProviderUnavailableError     code=PROVIDER_UNAVAILABLE    HTTP 503
+    ├── ProviderAuthError            code=PROVIDER_AUTHENTICATION_FAILED HTTP 502
+    └── ProviderError                code=PROVIDER_ERROR          HTTP 502
+
+All exceptions caught by:
+    register_exception_handlers(app)
+        └── @app.exception_handler(ProviderException)
+                → _error_response(exc.status_code, exc.code, exc.message, request_id)
+                → {"error": {"code": "...", "message": "...", "request_id": "..."}}
+
+API keys NEVER appear in error messages or logs.
+Provider stack traces NEVER reach the client.
+```
+
+---
+
+### How to Add a New Provider (Phase 3+)
+
+1. **Create** `backend/app/providers/{name}_provider.py`
+2. **Implement** `BaseLLMProvider` — all 4 abstract methods
+3. **Translate** provider errors to `ProviderException` subclasses in `_raise_from_status()`
+4. **Add** config to `Settings`: `{name}_api_key`, `{name}_enabled`, `{name}_available`
+5. **Register** in `main._init_providers()`:
+   ```python
+   if settings.{name}_available:
+       registry.register(NewProvider(api_key=settings.{name}_api_key))
+   ```
+6. **Add** to `app/providers/__init__.py` exports
+7. **Add** tests in `tests/test_providers.py`
+
+**No changes needed in**: routes, ChatService, ProviderRegistry, exception handlers,
+schemas, or any existing provider.
+
+---
+
+## Phase 2 New Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROVIDER_TIMEOUT_SECONDS` | `30` | Timeout for all provider HTTP requests |
+| `DEFAULT_PROVIDER` | — | Reserved for Phase 3 routing |
+| `DEFAULT_MODEL` | — | Reserved for Phase 3 routing |
+| `OPENAI_API_KEY` | — | OpenAI API key (blank = provider disabled) |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI base URL (override for Azure etc) |
+| `OPENAI_ENABLED` | `true` | Enable/disable OpenAI |
+| `GEMINI_API_KEY` | — | Google Gemini API key |
+| `GEMINI_ENABLED` | `true` | Enable/disable Gemini |
+| `GROQ_API_KEY` | — | Groq API key |
+| `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | Groq base URL |
+| `GROQ_ENABLED` | `true` | Enable/disable Groq |

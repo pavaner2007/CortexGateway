@@ -62,7 +62,7 @@ Your Application
 
 ## Features
 
-### Currently Available
+### Phase 1 — Infrastructure Foundation ✅
 - ⚡ **Async FastAPI backend** with full lifespan management
 - 🗄️ **PostgreSQL** with SQLAlchemy 2.x async engine and asyncpg driver
 - ⚡ **Redis** async client with connection pooling
@@ -73,13 +73,24 @@ Your Application
 - 📖 **API documentation** — Swagger UI at `/docs`, ReDoc at `/redoc`
 - 🎨 **React dashboard** — live system status with 30s auto-polling
 - 🐳 **Docker Compose** — full 4-service stack, one command to run
-- ✅ **33 automated tests** — run without Docker, all dependencies mocked
+
+### Phase 2 — Unified Multi-LLM Gateway ✅
+- 🤖 **Three provider adapters** — OpenAI, Google Gemini, Groq (all async)
+- 🔌 **Provider abstraction** — `BaseLLMProvider` ABC, Open/Closed Principle
+- 📋 **Provider registry** — register, retrieve, discover providers at runtime
+- 🔀 **Unified chat API** — one endpoint, any provider, normalized response
+- 📊 **Token usage normalization** — consistent `prompt/completion/total_tokens` across all providers
+- ⏱️ **Latency tracking** — provider request duration in every response
+- 🛡️ **Error normalization** — 8 typed error codes, correct HTTP status per error type
+- 🔑 **Safe credential handling** — missing keys disable provider gracefully, never logged
+- 🔍 **Provider discovery** — list providers, get details, list models per provider
+- ✅ **99 automated tests** — all passing, zero real API credits required
 
 ### Coming Soon
-- 🤖 Unified Multi-LLM API (OpenAI · Gemini · Groq · Anthropic)
 - 🔐 Authentication & API key management
 - 👥 Teams & organizations
 - 🚦 Rate limiting & budget controls
+- 🔄 Intelligent routing (cost/latency/capability-based)
 - 💰 Cost tracking & analytics
 - 📊 Prometheus metrics & OpenTelemetry tracing
 - 🔄 Automatic failover & circuit breakers
@@ -164,7 +175,7 @@ pytest tests/ -v
 ```
 
 ```
-33 passed in 0.30s ✅
+99 passed in 0.55s ✅
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -192,6 +203,24 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | `SECRET_KEY` | — | ⚠️ **Change this** (32+ chars) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins |
+
+### Provider Configuration (Phase 2)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROVIDER_TIMEOUT_SECONDS` | `30` | Timeout for all provider requests |
+| `DEFAULT_PROVIDER` | — | Optional default provider name |
+| `DEFAULT_MODEL` | — | Optional default model |
+| `OPENAI_API_KEY` | — | OpenAI API key (blank = disabled) |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI base URL |
+| `OPENAI_ENABLED` | `true` | Enable/disable OpenAI |
+| `GEMINI_API_KEY` | — | Google Gemini API key (blank = disabled) |
+| `GEMINI_ENABLED` | `true` | Enable/disable Gemini |
+| `GROQ_API_KEY` | — | Groq API key (blank = disabled) |
+| `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | Groq base URL |
+| `GROQ_ENABLED` | `true` | Enable/disable Groq |
+
+> A missing or blank API key disables the provider gracefully. The application starts normally and returns `INVALID_PROVIDER` when that provider is requested.
 
 ---
 
@@ -225,6 +254,107 @@ Independently checks all dependencies. Returns `200 OK` when healthy, `503 Servi
 { "version": "1.0.0" }
 ```
 
+---
+
+## Phase 2 API — Unified Chat Completions
+
+### `POST /api/v1/chat/completions`
+
+Send a chat request to any provider using the same schema.
+
+```bash
+# Groq
+curl -X POST http://localhost:8000/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "groq",
+    "model": "llama-3.3-70b-versatile",
+    "messages": [{"role": "user", "content": "Explain Docker in simple terms."}],
+    "temperature": 0.7,
+    "max_tokens": 500
+  }'
+
+# Gemini
+curl -X POST http://localhost:8000/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "gemini",
+    "model": "gemini-1.5-flash",
+    "messages": [{"role": "user", "content": "Explain Docker in simple terms."}]
+  }'
+
+# OpenAI
+curl -X POST http://localhost:8000/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "messages": [{"role": "user", "content": "Explain Docker in simple terms."}]
+  }'
+```
+
+**Normalized response (identical shape for all providers):**
+```json
+{
+  "id": "ctx_abc123def456",
+  "object": "chat.completion",
+  "created": 1710000000,
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "choices": [{
+    "index": 0,
+    "message": {"role": "assistant", "content": "Docker is ..."},
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 85,
+    "total_tokens": 97
+  },
+  "metadata": {
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "latency_ms": 423.5
+  }
+}
+```
+
+### `GET /api/v1/providers`
+```json
+{"providers": [{"name": "groq", "enabled": true, "available": true}, ...]}
+```
+
+### `GET /api/v1/providers/{provider}`
+```json
+{"name": "groq", "enabled": true, "available": true, "capabilities": ["chat"]}
+```
+
+### `GET /api/v1/providers/{provider}/models`
+```json
+{"provider": "groq", "models": ["llama-3.3-70b-versatile", "llama3-8b-8192", ...]}
+```
+
+### Error Response Format
+```json
+{
+  "error": {
+    "code": "PROVIDER_RATE_LIMITED",
+    "message": "The selected provider is currently rate limited.",
+    "request_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+| Error Code | HTTP | Cause |
+|------------|------|-------|
+| `INVALID_PROVIDER` | 404 | Provider not registered |
+| `PROVIDER_DISABLED` | 503 | Provider explicitly disabled |
+| `INVALID_MODEL` | 400 | Model not found on provider |
+| `PROVIDER_TIMEOUT` | 504 | Request exceeded timeout |
+| `PROVIDER_RATE_LIMITED` | 429 | Provider rate limit hit |
+| `PROVIDER_UNAVAILABLE` | 503 | Provider service down |
+| `PROVIDER_AUTHENTICATION_FAILED` | 502 | Invalid/missing API key |
+| `PROVIDER_ERROR` | 502 | Generic upstream error |
+
 Full API docs → http://localhost:8000/docs
 
 ---
@@ -236,9 +366,11 @@ CortexGateway/
 ├── backend/
 │   ├── app/
 │   │   ├── api/v1/endpoints/
-│   │   │   └── health.py          # GET /, /version, /health
+│   │   │   ├── health.py          # GET /, /version, /health
+│   │   │   ├── chat.py            # POST /api/v1/chat/completions
+│   │   │   └── providers.py       # GET /api/v1/providers/*
 │   │   ├── config/
-│   │   │   └── settings.py        # Pydantic Settings v2
+│   │   │   └── settings.py        # Pydantic Settings v2 (+ provider config)
 │   │   ├── core/
 │   │   │   └── logging.py         # Loguru configuration
 │   │   ├── database/
@@ -246,15 +378,27 @@ CortexGateway/
 │   │   ├── middleware/
 │   │   │   ├── request_id.py      # X-Request-ID propagation
 │   │   │   └── logging.py         # Request/response logging
+│   │   ├── providers/
+│   │   │   ├── base.py            # BaseLLMProvider ABC
+│   │   │   ├── registry.py        # ProviderRegistry singleton
+│   │   │   ├── exceptions.py      # Typed provider exception hierarchy
+│   │   │   ├── openai_provider.py # OpenAI async adapter
+│   │   │   ├── gemini_provider.py # Google Gemini async adapter
+│   │   │   └── groq_provider.py   # Groq async adapter
 │   │   ├── schemas/
-│   │   │   └── responses.py       # Shared Pydantic v2 models
+│   │   │   ├── responses.py       # Phase 1 shared Pydantic v2 models
+│   │   │   └── chat.py            # Phase 2 chat request/response schemas
+│   │   ├── services/
+│   │   │   └── chat_service.py    # ChatService orchestration layer
 │   │   ├── utils/
 │   │   │   └── redis_client.py    # Async Redis client
 │   │   ├── exceptions.py          # Global exception handlers
 │   │   └── main.py                # FastAPI app + lifespan
 │   ├── tests/
 │   │   ├── conftest.py            # Fixtures (DB/Redis mocked)
-│   │   └── test_endpoints.py      # 33 endpoint tests
+│   │   ├── test_endpoints.py      # 33 Phase 1 endpoint tests
+│   │   ├── test_providers.py      # 32 provider unit tests
+│   │   └── test_chat_api.py       # 34 Phase 2 API tests
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
@@ -285,15 +429,15 @@ CortexGateway/
 | # | Feature | Status |
 |---|---------|--------|
 | 1 | Infrastructure Foundation | ✅ **Done** |
-| 2 | Unified Multi-LLM Gateway | 🔜 Next |
-| 3 | Authentication & API Keys | ⏳ Planned |
-| 4 | Teams & Organizations | ⏳ Planned |
-| 5 | Rate Limiting & Budgets | ⏳ Planned |
-| 6 | Provider Failover & Circuit Breakers | ⏳ Planned |
-| 7 | Cost Tracking & Analytics | ⏳ Planned |
-| 8 | Prometheus & OpenTelemetry | ⏳ Planned |
-| 9 | Admin Dashboard | ⏳ Planned |
-| 10 | Production Hardening | ⏳ Planned |
+| 2 | Unified Multi-LLM Gateway | ✅ **Done** |
+| 3 | Intelligent Routing Engine | 🔜 Next |
+| 4 | Authentication & API Keys | ⏳ Planned |
+| 5 | Teams & Organizations | ⏳ Planned |
+| 6 | Rate Limiting & Budgets | ⏳ Planned |
+| 7 | Provider Failover & Circuit Breakers | ⏳ Planned |
+| 8 | Cost Tracking & Analytics | ⏳ Planned |
+| 9 | Prometheus & OpenTelemetry | ⏳ Planned |
+| 10 | Admin Dashboard | ⏳ Planned |
 
 ---
 
