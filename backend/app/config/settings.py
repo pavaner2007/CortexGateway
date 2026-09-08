@@ -4,6 +4,9 @@ Cortex Gateway — Centralized Application Settings.
 All configuration is loaded from environment variables and/or a .env file.
 DATABASE_URL and REDIS_URL are auto-constructed from component variables;
 callers should always use the computed properties, never raw component vars.
+
+Phase 2 adds provider API keys, enable flags, timeout, and routing defaults.
+Provider API keys are NEVER logged or returned to clients.
 """
 
 from functools import lru_cache
@@ -60,6 +63,25 @@ class Settings(BaseSettings):
     # ── CORS ─────────────────────────────────────────────────────────────────
     cors_origins: str = "http://localhost:5173"
 
+    # ── Provider: Global ─────────────────────────────────────────────────────
+    provider_timeout_seconds: int = 30
+    default_provider: str = ""
+    default_model: str = ""
+
+    # ── Provider: OpenAI ─────────────────────────────────────────────────────
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_enabled: bool = True
+
+    # ── Provider: Google Gemini ───────────────────────────────────────────────
+    gemini_api_key: str = ""
+    gemini_enabled: bool = True
+
+    # ── Provider: Groq ────────────────────────────────────────────────────────
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_enabled: bool = True
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: object) -> object:
@@ -99,6 +121,20 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    # ── Provider availability helpers (no key = unavailable) ─────────────────
+
+    @property
+    def openai_available(self) -> bool:
+        return self.openai_enabled and bool(self.openai_api_key)
+
+    @property
+    def gemini_available(self) -> bool:
+        return self.gemini_enabled and bool(self.gemini_api_key)
+
+    @property
+    def groq_available(self) -> bool:
+        return self.groq_enabled and bool(self.groq_api_key)
 
 
 @lru_cache(maxsize=1)

@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import logger
 from app.middleware.request_id import get_request_id
+from app.providers.exceptions import ProviderException
 from app.schemas.responses import ErrorDetail, ErrorResponse
 
 
@@ -99,6 +100,25 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=exc.status_code,
             code=code,
             message=str(exc.detail),
+            request_id=request_id,
+        )
+
+    @app.exception_handler(ProviderException)
+    async def provider_exception_handler(
+        request: Request, exc: ProviderException
+    ) -> JSONResponse:
+        request_id = get_request_id()
+        logger.warning(
+            "Provider error",
+            request_id=request_id,
+            path=str(request.url.path),
+            code=exc.code,
+            message=exc.message,
+        )
+        return _error_response(
+            status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
             request_id=request_id,
         )
 
