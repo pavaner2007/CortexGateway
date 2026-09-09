@@ -71,11 +71,13 @@ class Settings(BaseSettings):
     # ── Provider: Google Gemini ───────────────────────────────────────────────
     gemini_api_key: str = ""
     gemini_enabled: bool = True
+    gemini_timeout_seconds: int = 30
 
     # ── Provider: Groq ────────────────────────────────────────────────────────
     groq_api_key: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_enabled: bool = True
+    groq_timeout_seconds: int = 30
 
     # ── Provider: Ollama (Local / Self-hosted) ─────────────────────────────────
     ollama_base_url: str = "http://localhost:11434"
@@ -95,6 +97,17 @@ class Settings(BaseSettings):
     routing_latency_weight: float = 0.20
     routing_cost_weight: float = 0.20
     routing_ollama_cost_per_1k: float = 0.00
+
+    # ── Reliability & Resilience (Phase 4) ────────────────────────────────────
+    reliability_total_request_timeout_seconds: int = 120
+    reliability_max_retries: int = 2
+    reliability_retry_base_delay_seconds: float = 0.25
+    reliability_retry_max_delay_seconds: float = 2.0
+    reliability_retry_jitter: bool = True
+    circuit_breaker_failure_threshold: int = 5
+    circuit_breaker_cooldown_seconds: float = 30.0
+    circuit_breaker_half_open_trials: int = 1
+    reliability_max_failover_attempts: int = 2
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -57,7 +57,7 @@ def _init_providers() -> None:
         registry.register(
             GeminiProvider(
                 api_key=settings.gemini_api_key,
-                timeout=settings.provider_timeout_seconds,
+                timeout=settings.gemini_timeout_seconds,
             )
         )
     else:
@@ -70,7 +70,7 @@ def _init_providers() -> None:
             GroqProvider(
                 api_key=settings.groq_api_key,
                 base_url=settings.groq_base_url,
-                timeout=settings.provider_timeout_seconds,
+                timeout=settings.groq_timeout_seconds,
             )
         )
     else:

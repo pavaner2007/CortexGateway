@@ -98,7 +98,17 @@ Your Application
 - **Runtime Rolling Statistics** — In-memory rolling tracker for request volume, success rates, and exponential moving average latency.
 - **Deterministic Tie-Breaking & Cold Start** — Multi-tiered deterministic tie-breaker guarantees repeatable routing decisions.
 - **Routing Metadata Propagation** — Responses include `routing_mode` for full client observability.
-- **134 automated tests** — 100% passing across Phase 1, Phase 2, and Phase 3 with zero real API credits required.
+
+### Phase 4 — Reliability and Resilience [Done]
+- **Provider-Specific Timeouts** — Independently configurable timeouts for Gemini (30s), Groq (30s), and Ollama (60s).
+- **Total Request Deadline** — Configurable maximum request deadline (120s) preventing unbounded retry and failover chains.
+- **Transient Failure Classification** — Retries only on network drops, timeouts, 5xx server errors, and service outages; client 4xx errors fast-fail without retry.
+- **Exponential Backoff & Jitter** — Non-blocking async sleep with randomized jitter to mitigate synchronized retry storms.
+- **In-Memory Circuit Breaker** — 3-state machine (CLOSED, OPEN, HALF_OPEN) per provider. Tripped OPEN circuits fast-fail immediately without network calls or cascading slowness.
+- **Automated Failover via Phase 3 Scorer** — Exhausted retries or tripped circuits automatically trigger next-best candidate discovery from Phase 3 router with loop prevention.
+- **Capability-Preserving Fallback** — Fallbacks strictly satisfy original request capability constraints (e.g., vision).
+- **Rich Reliability Metadata** — Responses carry `selected_provider`, `original_provider`, `failover_triggered`, `retry_count`, `failover_attempts`, and `circuit_breaker_state`.
+- **154 automated tests** — 100% passing across Phase 1, Phase 2, Phase 3, and Phase 4 with zero real API credits required.
 
 ### Planned Features
 - Authentication & API key management
@@ -106,7 +116,6 @@ Your Application
 - Rate limiting & budget controls
 - Cost tracking & persistent database analytics
 - Prometheus metrics & OpenTelemetry tracing
-- Automatic failover, retries & circuit breakers
 - Full Admin dashboard
 
 ---
@@ -483,10 +492,10 @@ CortexGateway/
 | 1 | Infrastructure Foundation | **Done** |
 | 2 | Unified Multi-LLM Gateway | **Done** |
 | 3 | Intelligent Routing Engine | **Done** |
-| 4 | Authentication & API Keys | Planned |
-| 5 | Teams & Organizations | Planned |
-| 6 | Rate Limiting & Budgets | Planned |
-| 7 | Provider Failover & Circuit Breakers | Planned |
+| 4 | Reliability & Resilience | **Done** |
+| 5 | Authentication & API Keys | Planned |
+| 6 | Teams & Organizations | Planned |
+| 7 | Rate Limiting & Budgets | Planned |
 | 8 | Cost Tracking & Analytics | Planned |
 | 9 | Prometheus & OpenTelemetry | Planned |
 | 10 | Admin Dashboard | Planned |

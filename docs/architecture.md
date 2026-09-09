@@ -576,4 +576,74 @@ Incoming Request (POST /api/v1/chat/completions)
 | `capability_based`| 0.30 | 0.30 | 0.20 | 0.20 | Balanced after strict capability filter |
 | `manual` | — | — | — | — | Direct client bypass |
 
+---
+
+## Phase 4 — Reliability and Resilience
+
+### Architecture
+
+```
+Request (POST /api/v1/chat/completions)
+       │
+       ▼
+ChatService.complete()
+       │
+       ▼
+Phase 3 Routing Engine (Selects Primary Candidate)
+       │
+       ▼
+ReliabilityExecutor.execute()
+ ┌─────────────────────────────────────────────────────────────┐
+ │ 1. Total Request Deadline Check (timeout: 120s)             │
+ │ 2. Circuit Breaker Check (CLOSED / HALF_OPEN / OPEN)        │
+ │ 3. If OPEN ──► Fast failover without calling provider       │
+ │ 4. Provider Adapter Call (with provider-specific timeout)   │
+ │ 5. Execution Outcome:                                       │
+ │    ├── SUCCESS:                                             │
+ │    │     • Reset / update circuit state                     │
+ │    │     • Update Phase 3 runtime statistics                │
+ │    │     • Attach reliability metadata to response          │
+ │    │     • Return ChatCompletionResponse                    │
+ │    │                                                        │
+ │    └── TRANSIENT FAILURE (Timeout / 5xx / Network drop):    │
+ │          • If attempt < max_retries & deadline not exceeded:│
+ │          │     • Compute exponential backoff + jitter       │
+ │          │     • Async non-blocking sleep & retry provider  │
+ │          │                                                  │
+ │          • If retries exhausted:                            │
+ │                • Trip Circuit Breaker failure counter       │
+ │                • If threshold reached ──► Transition to OPEN│
+ │                • If failover enabled:                       │
+ │                │     • Exclude attempted providers          │
+ │                │     • Phase 3 Scorer selects next best     │
+ │                │     • Execute fallback candidate           │
+ │                │                                            │
+ │                • Else: Re-raise normalized error            │
+ └─────────────────────────────────────────────────────────────┘
+```
+
+### Circuit Breaker States
+
+- **CLOSED**: Normal operation. All requests pass through. Transient failures increment the counter.
+- **OPEN**: Provider marked down. Calls short-circuit immediately without network calls or retries.
+- **HALF_OPEN**: Cooldown period (30s) expired. Allows limited test trials. Success resets to CLOSED; failure immediately re-opens circuit.
+
+### Reliability Configuration Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `GEMINI_TIMEOUT_SECONDS` | `30` | Google Gemini request timeout |
+| `GROQ_TIMEOUT_SECONDS` | `30` | Groq request timeout |
+| `OLLAMA_TIMEOUT_SECONDS` | `60` | Ollama local request timeout |
+| `RELIABILITY_TOTAL_REQUEST_TIMEOUT_SECONDS` | `120` | Max duration across all attempts and failovers |
+| `RELIABILITY_MAX_RETRIES` | `2` | Max retries per candidate (1 initial + 2 retries = 3 attempts) |
+| `RELIABILITY_RETRY_BASE_DELAY_SECONDS` | `0.25` | Base backoff delay |
+| `RELIABILITY_RETRY_MAX_DELAY_SECONDS` | `2.0` | Max backoff delay ceiling |
+| `RELIABILITY_RETRY_JITTER` | `true` | Adds randomized jitter to backoff |
+| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Consecutive failures before tripping to OPEN |
+| `CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `30.0` | Seconds to remain OPEN before transitioning to HALF_OPEN |
+| `CIRCUIT_BREAKER_HALF_OPEN_TRIALS` | `1` | Number of probe trials permitted in HALF_OPEN state |
+| `RELIABILITY_MAX_FAILOVER_ATTEMPTS` | `2` | Max number of alternative providers to attempt |
+
+
 

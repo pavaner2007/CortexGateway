@@ -91,6 +91,10 @@ class ChatCompletionRequest(BaseModel):
         None,
         description="Stop sequences. Generation halts when any sequence is produced.",
     )
+    failover_enabled: Optional[bool] = Field(
+        True,
+        description="Enable automatic failover if the selected provider fails.",
+    )
 
     @field_validator("provider", mode="before")
     @classmethod
@@ -156,6 +160,34 @@ class ResponseMetadata(BaseModel):
     routing_mode: Optional[str] = Field(
         None,
         description="Routing mode applied to this request.",
+    )
+    selected_provider: Optional[str] = Field(
+        None,
+        description="Actual provider that fulfilled the completion.",
+    )
+    selected_model: Optional[str] = Field(
+        None,
+        description="Actual model that fulfilled the completion.",
+    )
+    original_provider: Optional[str] = Field(
+        None,
+        description="Initially selected provider before any failover.",
+    )
+    failover_triggered: bool = Field(
+        False,
+        description="True if automatic failover occurred.",
+    )
+    retry_count: int = Field(
+        0,
+        description="Total number of retry attempts executed.",
+    )
+    failover_attempts: int = Field(
+        0,
+        description="Number of fallback candidate providers attempted.",
+    )
+    circuit_breaker_state: Optional[str] = Field(
+        None,
+        description="Circuit breaker state of selected provider.",
     )
 
 
