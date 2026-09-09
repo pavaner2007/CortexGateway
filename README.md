@@ -63,51 +63,51 @@ Your Application
 
 ## Features
 
-### Phase 1 — Infrastructure Foundation ✅
-- ⚡ **Async FastAPI backend** with full lifespan management
-- 🗄️ **PostgreSQL** with SQLAlchemy 2.x async engine and asyncpg driver
-- ⚡ **Redis** async client with connection pooling
-- 🔍 **Health monitoring** — independent concurrent checks for all dependencies
-- 🆔 **Request ID propagation** — `X-Request-ID` header through every request
-- 📋 **Structured logging** — timestamped, request-scoped, Loguru-powered
-- 🛡️ **Global error handling** — consistent JSON error envelope, no stack traces exposed
-- 📖 **API documentation** — Swagger UI at `/docs`, ReDoc at `/redoc`
-- 🎨 **React dashboard** — live system status with 30s auto-polling
-- 🐳 **Docker Compose** — full multi-service stack, one command to run
+### Phase 1 — Infrastructure Foundation [Done]
+- **Async FastAPI backend** with full lifespan management
+- **PostgreSQL** with SQLAlchemy 2.x async engine and asyncpg driver
+- **Redis** async client with connection pooling
+- **Health monitoring** — independent concurrent checks for all dependencies
+- **Request ID propagation** — `X-Request-ID` header through every request
+- **Structured logging** — timestamped, request-scoped, Loguru-powered
+- **Global error handling** — consistent JSON error envelope, no stack traces exposed
+- **API documentation** — Swagger UI at `/docs`, ReDoc at `/redoc`
+- **React dashboard** — live system status with 30s auto-polling
+- **Docker Compose** — full multi-service stack, one command to run
 
-### Phase 2 — Unified Multi-LLM Gateway ✅
-- 🤖 **Three active provider adapters** — Google Gemini (Cloud), Groq (Cloud), Ollama (Local / Self-hosted)
-- 🔌 **Provider abstraction** — `BaseLLMProvider` ABC, Open/Closed Principle supporting cloud and local runtimes
-- 📋 **Provider registry** — register, retrieve, discover providers at runtime
-- 🔀 **Unified chat API** — one endpoint, any provider, normalized response
-- 📊 **Token usage normalization** — consistent `prompt/completion/total_tokens` across all providers
-- ⏱️ **Latency tracking** — provider request duration in every response
-- 🛡️ **Error normalization** — 8 typed error codes, correct HTTP status per error type
-- 🔑 **Safe credential handling** — missing keys disable cloud providers gracefully, zero keys needed for Ollama
-- 🔍 **Provider & Model discovery** — list providers, get details, dynamic model discovery (including local Ollama models)
+### Phase 2 — Unified Multi-LLM Gateway [Done]
+- **Three active provider adapters** — Google Gemini (Cloud), Groq (Cloud), Ollama (Local / Self-hosted)
+- **Provider abstraction** — `BaseLLMProvider` ABC, Open/Closed Principle supporting cloud and local runtimes
+- **Provider registry** — register, retrieve, discover providers at runtime
+- **Unified chat API** — one endpoint, any provider, normalized response
+- **Token usage normalization** — consistent `prompt/completion/total_tokens` across all providers
+- **Latency tracking** — provider request duration in every response
+- **Error normalization** — 8 typed error codes, correct HTTP status per error type
+- **Safe credential handling** — missing keys disable cloud providers gracefully, zero keys needed for Ollama
+- **Provider & Model discovery** — list providers, get details, dynamic model discovery (including local Ollama models)
 
-### Phase 3 — Intelligent Routing Engine ✅
-- 🧭 **6 Dynamic Routing Modes**:
+### Phase 3 — Intelligent Routing Engine [Done]
+- **6 Dynamic Routing Modes**:
   - `auto`: Balanced multi-factor scoring across health (30%), success rate (30%), latency (20%), and cost (20%).
   - `lowest_latency`: Response speed prioritized (60% latency weight, selects ultra-fast models like Groq Llama 3.1 8B Instant).
   - `lowest_cost`: Cost-efficiency prioritized (60% cost weight, prioritizes free self-hosted Ollama models).
   - `best_available`: Reliability maximized (80% health + success rate combined).
   - `capability_based`: Strict pre-filtering for required modalities (e.g., `vision`, `json`, `code`, `function_calling`).
   - `manual`: Direct bypass with deterministic explicit provider + model targeting.
-- 🎯 **Capability Pre-filtering** — Incompatible candidates are discarded before scoring (e.g. vision tasks route strictly to multimodal models).
-- 📈 **Runtime Rolling Statistics** — In-memory rolling tracker for request volume, success rates, and exponential moving average latency.
-- ⚖️ **Deterministic Tie-Breaking & Cold Start** — Multi-tiered deterministic tie-breaker guarantees repeatable routing decisions.
-- 🏷️ **Routing Metadata Propagation** — Responses include `routing_mode` for full client observability.
-- ✅ **134 automated tests** — 100% passing across Phase 1, Phase 2, and Phase 3 with zero real API credits required.
+- **Capability Pre-filtering** — Incompatible candidates are discarded before scoring (e.g. vision tasks route strictly to multimodal models).
+- **Runtime Rolling Statistics** — In-memory rolling tracker for request volume, success rates, and exponential moving average latency.
+- **Deterministic Tie-Breaking & Cold Start** — Multi-tiered deterministic tie-breaker guarantees repeatable routing decisions.
+- **Routing Metadata Propagation** — Responses include `routing_mode` for full client observability.
+- **134 automated tests** — 100% passing across Phase 1, Phase 2, and Phase 3 with zero real API credits required.
 
-### Coming Soon
-- 🔐 Authentication & API key management
-- 👥 Teams & organizations
-- 🚦 Rate limiting & budget controls
-- 💰 Cost tracking & persistent database analytics
-- 📊 Prometheus metrics & OpenTelemetry tracing
-- 🔄 Automatic failover, retries & circuit breakers
-- 🖥️ Full Admin dashboard
+### Planned Features
+- Authentication & API key management
+- Teams & organizations
+- Rate limiting & budget controls
+- Cost tracking & persistent database analytics
+- Prometheus metrics & OpenTelemetry tracing
+- Automatic failover, retries & circuit breakers
+- Full Admin dashboard
 
 ---
 
@@ -139,11 +139,11 @@ That's it. All 4 services start automatically.
 
 | Service | URL |
 |---------|-----|
-| 🖥️ Frontend Dashboard | http://localhost:5173 |
-| ⚙️ Backend API | http://localhost:8000 |
-| 📖 Swagger UI | http://localhost:8000/docs |
-| 📚 ReDoc | http://localhost:8000/redoc |
-| ❤️ Health Check | http://localhost:8000/health |
+| Frontend Dashboard | http://localhost:5173 |
+| Backend API | http://localhost:8000 |
+| Swagger UI | http://localhost:8000/docs |
+| ReDoc | http://localhost:8000/redoc |
+| Health Check | http://localhost:8000/health |
 
 ---
 
@@ -188,7 +188,7 @@ pytest tests/ -v
 ```
 
 ```
-99 passed in 0.55s ✅
+134 passed in 0.71s
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -208,12 +208,12 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | `POSTGRES_PORT` | `5432` | PostgreSQL port |
 | `POSTGRES_DB` | `cortex_gateway` | Database name |
 | `POSTGRES_USER` | `cortex_user` | Database user |
-| `POSTGRES_PASSWORD` | — | ⚠️ **Change this** |
+| `POSTGRES_PASSWORD` | — | **Change this** |
 | `DATABASE_URL` | *(auto)* | Leave blank — auto-composed |
 | `REDIS_HOST` | `redis` | Redis hostname |
 | `REDIS_PORT` | `6379` | Redis port |
 | `REDIS_URL` | *(auto)* | Leave blank — auto-composed |
-| `SECRET_KEY` | — | ⚠️ **Change this** (32+ chars) |
+| `SECRET_KEY` | — | **Change this** (32+ chars) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins |
 
@@ -480,16 +480,16 @@ CortexGateway/
 
 | # | Feature | Status |
 |---|---------|--------|
-| 1 | Infrastructure Foundation | ✅ **Done** |
-| 2 | Unified Multi-LLM Gateway | ✅ **Done** |
-| 3 | Intelligent Routing Engine | 🔜 Next |
-| 4 | Authentication & API Keys | ⏳ Planned |
-| 5 | Teams & Organizations | ⏳ Planned |
-| 6 | Rate Limiting & Budgets | ⏳ Planned |
-| 7 | Provider Failover & Circuit Breakers | ⏳ Planned |
-| 8 | Cost Tracking & Analytics | ⏳ Planned |
-| 9 | Prometheus & OpenTelemetry | ⏳ Planned |
-| 10 | Admin Dashboard | ⏳ Planned |
+| 1 | Infrastructure Foundation | **Done** |
+| 2 | Unified Multi-LLM Gateway | **Done** |
+| 3 | Intelligent Routing Engine | **Done** |
+| 4 | Authentication & API Keys | Planned |
+| 5 | Teams & Organizations | Planned |
+| 6 | Rate Limiting & Budgets | Planned |
+| 7 | Provider Failover & Circuit Breakers | Planned |
+| 8 | Cost Tracking & Analytics | Planned |
+| 9 | Prometheus & OpenTelemetry | Planned |
+| 10 | Admin Dashboard | Planned |
 
 ---
 
