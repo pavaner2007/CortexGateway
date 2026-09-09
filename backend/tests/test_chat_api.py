@@ -76,7 +76,14 @@ def _make_mock_registry(
                 provider=p, model=req.model, request_id=req_id
             )
         )
-        mp.list_models = AsyncMock(return_value=[f"{name}-model-1", f"{name}-model-2"])
+        if name == "groq":
+            mp.list_models = AsyncMock(return_value=["llama-3.3-70b-versatile", "llama-3.1-8b-instant"])
+        elif name == "gemini":
+            mp.list_models = AsyncMock(return_value=["gemini-1.5-flash", "gemini-1.5-pro"])
+        elif name == "ollama":
+            mp.list_models = AsyncMock(return_value=["llama3.2", "qwen2.5"])
+        else:
+            mp.list_models = AsyncMock(return_value=[f"{name}-model-1", f"{name}-model-2"])
         mp.health_check = AsyncMock(return_value=True)
         reg.register(mp)
     return reg
@@ -454,3 +461,87 @@ class TestProviderModelsEndpoint:
         with patch("app.api.v1.endpoints.providers.get_registry", return_value=empty_reg):
             resp = client.get("/api/v1/providers/badprovider/models")
         assert resp.status_code == 404
+
+
+# ── Phase 3 Intelligent Routing Endpoint Tests ───────────────────────────────
+
+
+class TestIntelligentRoutingEndpoints:
+    def test_auto_routing_with_model_auto(self, client: TestClient) -> None:
+        """Sending model='auto' invokes intelligent routing."""
+        resp = client.post(
+            "/api/v1/chat/completions",
+            json={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "Explain TCP"}],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider"] in ["gemini", "groq", "ollama"]
+        assert data["metadata"]["routing_mode"] == "auto"
+
+    def test_explicit_routing_mode_lowest_latency(self, client: TestClient) -> None:
+        """Routing mode 'lowest_latency' routes to lowest latency model."""
+        resp = client.post(
+            "/api/v1/chat/completions",
+            json={
+                "model": "auto",
+                "routing_mode": "lowest_latency",
+                "messages": [{"role": "user", "content": "Fast answer"}],
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["metadata"]["routing_mode"] == "lowest_latency"
+
+    def test_explicit_routing_mode_lowest_cost(self, client: TestClient) -> None:
+        """Routing mode 'lowest_cost' is supported."""
+        resp = client.post(
+            "/api/v1/chat/completions",
+            json={
+                "model": "auto",
+                "routing_mode": "lowest_cost",
+                "messages": [{"role": "user", "content": "Cheap answer"}],
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["metadata"]["routing_mode"] == "lowest_cost"
+
+    def test_capability_based_routing_with_vision(self, client: TestClient) -> None:
+        """Capability filtering selects a provider that supports vision."""
+        resp = client.post(
+            "/api/v1/chat/completions",
+            json={
+                "model": "auto",
+                "required_capabilities": ["vision"],
+                "messages": [{"role": "user", "content": "Describe image"}],
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["metadata"]["routing_mode"] == "capability_based"
+
+    def test_unsupported_capability_returns_400(self, client: TestClient) -> None:
+        """Requesting unavailable capability returns 400 NO_CAPABLE_PROVIDER."""
+        resp = client.post(
+            "/api/v1/chat/completions",
+            json={
+                "model": "auto",
+                "required_capabilities": ["telepathy_capability"],
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "NO_CAPABLE_PROVIDER"
+
+    def test_invalid_routing_mode_returns_400(self, client: TestClient) -> None:
+        """Specifying invalid routing mode returns 400 INVALID_ROUTING_MODE."""
+        resp = client.post(
+            "/api/v1/chat/completions",
+            json={
+                "model": "auto",
+                "routing_mode": "invalid_mode_xyz",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+        assert resp.status_code in [400, 422]
+

@@ -68,11 +68,6 @@ class Settings(BaseSettings):
     default_provider: str = ""
     default_model: str = ""
 
-    # ── Provider: OpenAI ─────────────────────────────────────────────────────
-    openai_api_key: str = ""
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_enabled: bool = True
-
     # ── Provider: Google Gemini ───────────────────────────────────────────────
     gemini_api_key: str = ""
     gemini_enabled: bool = True
@@ -87,10 +82,19 @@ class Settings(BaseSettings):
     ollama_enabled: bool = True
     ollama_timeout_seconds: int = 60
 
-    # ── Provider: OpenAI (Deprecated / Inactive in Phase 2) ───────────────────
+    # ── Provider: OpenAI (Deprecated / Inactive) ──────────────────────────────
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_enabled: bool = False
+
+    # ── Routing Engine (Phase 3) ──────────────────────────────────────────────
+    routing_enabled: bool = True
+    routing_default_mode: str = "auto"
+    routing_health_weight: float = 0.30
+    routing_success_rate_weight: float = 0.30
+    routing_latency_weight: float = 0.20
+    routing_cost_weight: float = 0.20
+    routing_ollama_cost_per_1k: float = 0.00
 
     @field_validator("cors_origins", mode="before")
     @classmethod

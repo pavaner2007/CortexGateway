@@ -37,17 +37,38 @@ class ChatCompletionRequest(BaseModel):
     """
     Provider-agnostic chat completion request.
 
-    The client explicitly selects the target provider.
+    Supports:
+    - Manual routing: explicit provider + concrete model name.
+    - Intelligent routing: model='auto' or routing_mode specified.
     """
 
-    provider: str = Field(
-        ..., description="The LLM provider to use (e.g. 'openai', 'gemini', 'groq')."
+    provider: Optional[str] = Field(
+        None,
+        description="The LLM provider (e.g. 'gemini', 'groq', 'ollama'). Optional when intelligent routing is used.",
     )
     model: str = Field(
-        ..., description="The model identifier understood by the selected provider."
+        ...,
+        description="The model identifier understood by the provider, or 'auto' to let Cortex Gateway select the best model.",
     )
     messages: List[ChatMessage] = Field(
         ..., description="Conversation messages. Must contain at least one message."
+    )
+    routing_mode: Optional[
+        Literal[
+            "manual",
+            "auto",
+            "lowest_cost",
+            "lowest_latency",
+            "best_available",
+            "capability_based",
+        ]
+    ] = Field(
+        None,
+        description="Routing policy: 'manual', 'auto', 'lowest_cost', 'lowest_latency', 'best_available', or 'capability_based'.",
+    )
+    required_capabilities: Optional[List[str]] = Field(
+        None,
+        description="List of required capabilities (e.g. ['vision', 'json', 'code']). Incompatible models will be filtered out.",
     )
     temperature: Optional[float] = Field(
         None,
@@ -73,10 +94,11 @@ class ChatCompletionRequest(BaseModel):
 
     @field_validator("provider", mode="before")
     @classmethod
-    def normalize_provider(cls, v: str) -> str:
+    def normalize_provider(cls, v: Optional[str]) -> Optional[str]:
         """Lowercase and strip the provider name for consistent lookup."""
         if isinstance(v, str):
-            return v.strip().lower()
+            val = v.strip().lower()
+            return val if val else None
         return v
 
     @field_validator("model", mode="before")
@@ -130,6 +152,10 @@ class ResponseMetadata(BaseModel):
     request_id: str
     latency_ms: float = Field(
         description="Provider request latency in milliseconds."
+    )
+    routing_mode: Optional[str] = Field(
+        None,
+        description="Routing mode applied to this request.",
     )
 
 

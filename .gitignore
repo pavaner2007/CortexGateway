@@ -45,6 +45,9 @@ yarn-error.log*
 frontend/dist/
 frontend/build/
 frontend/.vite/
+*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
 
 # ── IDEs and editors ─────────────────────────────────────────────────────────
 .vscode/

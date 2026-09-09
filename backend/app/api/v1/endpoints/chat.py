@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from app.middleware.request_id import get_request_id
 from app.providers.registry import ProviderRegistry, get_registry
+from app.routing.router import RoutingEngine, get_routing_engine
 from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
 from app.services.chat_service import ChatService
 
@@ -22,9 +23,10 @@ router = APIRouter()
 
 def _get_chat_service(
     reg: ProviderRegistry = Depends(get_registry),
+    router_engine: RoutingEngine = Depends(get_routing_engine),
 ) -> ChatService:
-    """FastAPI dependency: construct ChatService with the global registry."""
-    return ChatService(reg)
+    """FastAPI dependency: construct ChatService with global registry and routing engine."""
+    return ChatService(registry=reg, routing_engine=router_engine)
 
 
 @router.post(

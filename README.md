@@ -85,17 +85,29 @@ Your Application
 - 🛡️ **Error normalization** — 8 typed error codes, correct HTTP status per error type
 - 🔑 **Safe credential handling** — missing keys disable cloud providers gracefully, zero keys needed for Ollama
 - 🔍 **Provider & Model discovery** — list providers, get details, dynamic model discovery (including local Ollama models)
-- ✅ **104 automated tests** — all passing, zero real API credits required
+
+### Phase 3 — Intelligent Routing Engine ✅
+- 🧭 **6 Dynamic Routing Modes**:
+  - `auto`: Balanced multi-factor scoring across health (30%), success rate (30%), latency (20%), and cost (20%).
+  - `lowest_latency`: Response speed prioritized (60% latency weight, selects ultra-fast models like Groq Llama 3.1 8B Instant).
+  - `lowest_cost`: Cost-efficiency prioritized (60% cost weight, prioritizes free self-hosted Ollama models).
+  - `best_available`: Reliability maximized (80% health + success rate combined).
+  - `capability_based`: Strict pre-filtering for required modalities (e.g., `vision`, `json`, `code`, `function_calling`).
+  - `manual`: Direct bypass with deterministic explicit provider + model targeting.
+- 🎯 **Capability Pre-filtering** — Incompatible candidates are discarded before scoring (e.g. vision tasks route strictly to multimodal models).
+- 📈 **Runtime Rolling Statistics** — In-memory rolling tracker for request volume, success rates, and exponential moving average latency.
+- ⚖️ **Deterministic Tie-Breaking & Cold Start** — Multi-tiered deterministic tie-breaker guarantees repeatable routing decisions.
+- 🏷️ **Routing Metadata Propagation** — Responses include `routing_mode` for full client observability.
+- ✅ **134 automated tests** — 100% passing across Phase 1, Phase 2, and Phase 3 with zero real API credits required.
 
 ### Coming Soon
 - 🔐 Authentication & API key management
 - 👥 Teams & organizations
 - 🚦 Rate limiting & budget controls
-- 🔄 Intelligent routing (cost/latency/capability-based)
-- 💰 Cost tracking & analytics
+- 💰 Cost tracking & persistent database analytics
 - 📊 Prometheus metrics & OpenTelemetry tracing
-- 🔄 Automatic failover & circuit breakers
-- 🖥️ Admin dashboard
+- 🔄 Automatic failover, retries & circuit breakers
+- 🖥️ Full Admin dashboard
 
 ---
 
@@ -264,39 +276,52 @@ Independently checks all dependencies. Returns `200 OK` when healthy, `503 Servi
 
 Send a chat request to any provider using the exact same schema.
 
-```bash
-# 1. Local Ollama (e.g. llama3.2, qwen2.5)
+# ── Phase 3: Intelligent Routing Examples ──────────────────────────────────
+
+# 1. Automatic Multi-Factor Routing (model="auto")
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "X-Request-ID: ollama-req-001" \
+  -d '{
+    "model": "auto",
+    "routing_mode": "auto",
+    "messages": [{"role": "user", "content": "Design a resilient microservices architecture."}]
+  }'
+
+# 2. Lowest Latency Mode (Selects ultra-fast model e.g. Groq Llama-3.1-8B)
+curl -X POST http://localhost:8000/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "routing_mode": "lowest_latency",
+    "messages": [{"role": "user", "content": "Quick answer: What is the speed of light?"}]
+  }'
+
+# 3. Lowest Cost Mode (Prioritizes free self-hosted Ollama models)
+curl -X POST http://localhost:8000/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "routing_mode": "lowest_cost",
+    "messages": [{"role": "user", "content": "Summarize this long document..."}]
+  }'
+
+# 4. Capability-Based Routing (Requires Vision capability -> routes to Gemini)
+curl -X POST http://localhost:8000/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "required_capabilities": ["vision"],
+    "messages": [{"role": "user", "content": "Describe what you see in the provided image."}]
+  }'
+
+# 5. Direct Manual Routing (Explicit provider & concrete model)
+curl -X POST http://localhost:8000/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
   -d '{
     "provider": "ollama",
     "model": "llama3.2",
-    "messages": [{"role": "user", "content": "Explain Docker in simple terms."}],
-    "temperature": 0.7,
-    "max_tokens": 500
-  }'
-
-# 2. Groq (Cloud SDK)
-curl -X POST http://localhost:8000/api/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "groq",
-    "model": "llama-3.3-70b-versatile",
-    "messages": [{"role": "user", "content": "Explain Docker in simple terms."}],
-    "temperature": 0.7,
-    "max_tokens": 500
-  }'
-
-# 3. Google Gemini (Cloud SDK)
-curl -X POST http://localhost:8000/api/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "gemini",
-    "model": "gemini-1.5-flash",
     "messages": [{"role": "user", "content": "Explain Docker in simple terms."}]
   }'
-
 ```
 
 ---

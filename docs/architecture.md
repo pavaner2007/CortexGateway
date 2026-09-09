@@ -501,8 +501,6 @@ schemas, or any existing provider.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROVIDER_TIMEOUT_SECONDS` | `30` | Timeout for all provider HTTP requests |
-| `DEFAULT_PROVIDER` | — | Reserved for Phase 3 routing |
-| `DEFAULT_MODEL` | — | Reserved for Phase 3 routing |
 | `GEMINI_API_KEY` | — | Google Gemini API key |
 | `GEMINI_ENABLED` | `true` | Enable/disable Gemini |
 | `GROQ_API_KEY` | — | Groq API key |
@@ -511,4 +509,71 @@ schemas, or any existing provider.
 | `OLLAMA_ENABLED` | `true` | Enable/disable Ollama |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL (`http://ollama:11434` in Docker) |
 | `OLLAMA_TIMEOUT_SECONDS` | `60` | Ollama-specific request timeout |
+| `ROUTING_ENABLED` | `true` | Enable/disable intelligent routing |
+| `ROUTING_DEFAULT_MODE` | `auto` | Default routing mode (`auto`, `lowest_cost`, `lowest_latency`, `best_available`, `capability_based`, `manual`) |
+| `ROUTING_HEALTH_WEIGHT` | `0.30` | Health score weight |
+| `ROUTING_SUCCESS_RATE_WEIGHT` | `0.30` | Success rate score weight |
+| `ROUTING_LATENCY_WEIGHT` | `0.20` | Latency score weight |
+| `ROUTING_COST_WEIGHT` | `0.20` | Cost score weight |
+| `ROUTING_OLLAMA_COST_PER_1K` | `0.0` | Default cost per 1k tokens for local Ollama |
+
+---
+
+## Phase 3 — Intelligent Routing Engine
+
+### Architecture
+
+```
+Incoming Request (POST /api/v1/chat/completions)
+                     │
+                     ▼
+             ChatService.complete()
+                     │
+      ┌──────────────┴──────────────┐
+      │                             │
+[Manual Mode]                 [Intelligent Routing]
+(provider + concrete model)   (model="auto" or routing_mode set)
+      │                             │
+      │                             ▼
+      │                     CandidateBuilder
+      │             (Discovers models from Registry + Health + Stats + Metadata)
+      │                             │
+      │                             ▼
+      │                     Capability Pre-Filter
+      │             (Discards candidates missing required capabilities)
+      │                             │
+      │                             ▼
+      │                     CandidateScorer
+      │             (Multi-factor scoring: Health, Success Rate, Latency, Cost)
+      │                             │
+      │                             ▼
+      │                     Deterministic Tie-Breaker
+      │             (-score, -healthy, -success_rate, latency, cost, provider, model)
+      │                             │
+      │                             ▼
+      │                     RoutingDecision
+      │                             │
+      └──────────────┬──────────────┘
+                     ▼
+           Target Provider Adapter
+           (gemini / groq / ollama)
+                     │
+                     ▼
+           ProviderStatsTracker (records success/failure + latency)
+                     │
+                     ▼
+          Normalized ChatCompletionResponse
+```
+
+### Policy Weight Matrix
+
+| Routing Mode | Health Weight | Success Rate Weight | Latency Weight | Cost Weight | Primary Objective |
+|---|---|---|---|---|---|
+| `auto` | 0.30 | 0.30 | 0.20 | 0.20 | Balanced multi-factor optimization |
+| `lowest_latency` | 0.15 | 0.15 | 0.60 | 0.10 | Fastest response speed |
+| `lowest_cost` | 0.15 | 0.15 | 0.10 | 0.60 | Cost reduction (prioritizes free Ollama) |
+| `best_available` | 0.40 | 0.40 | 0.10 | 0.10 | Highest reliability and uptime |
+| `capability_based`| 0.30 | 0.30 | 0.20 | 0.20 | Balanced after strict capability filter |
+| `manual` | — | — | — | — | Direct client bypass |
+
 
