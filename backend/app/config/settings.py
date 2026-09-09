@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_enabled: bool = True
 
+    # ── Provider: Ollama (Local / Self-hosted) ─────────────────────────────────
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_enabled: bool = True
+    ollama_timeout_seconds: int = 60
+
+    # ── Provider: OpenAI (Deprecated / Inactive in Phase 2) ───────────────────
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_enabled: bool = False
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: object) -> object:
@@ -122,11 +132,7 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
 
-    # ── Provider availability helpers (no key = unavailable) ─────────────────
-
-    @property
-    def openai_available(self) -> bool:
-        return self.openai_enabled and bool(self.openai_api_key)
+    # ── Provider availability helpers ─────────────────────────────────────────
 
     @property
     def gemini_available(self) -> bool:
@@ -135,6 +141,15 @@ class Settings(BaseSettings):
     @property
     def groq_available(self) -> bool:
         return self.groq_enabled and bool(self.groq_api_key)
+
+    @property
+    def ollama_available(self) -> bool:
+        """Ollama is local and available whenever enabled with a base URL."""
+        return self.ollama_enabled and bool(self.ollama_base_url)
+
+    @property
+    def openai_available(self) -> bool:
+        return self.openai_enabled and bool(self.openai_api_key)
 
 
 @lru_cache(maxsize=1)

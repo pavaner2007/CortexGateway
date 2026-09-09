@@ -68,10 +68,14 @@ def _make_mock_registry(
 ) -> ProviderRegistry:
     """Build a mock registry with mock providers."""
     reg = ProviderRegistry()
-    for name in (providers or ["groq", "gemini", "openai"]):
+    for name in (providers or ["groq", "gemini", "ollama"]):
         mp = MagicMock()
         mp.name = name
-        mp.chat = AsyncMock(return_value=_make_mock_response(provider=name))
+        mp.chat = AsyncMock(
+            side_effect=lambda req, req_id, p=name: _make_mock_response(
+                provider=p, model=req.model, request_id=req_id
+            )
+        )
         mp.list_models = AsyncMock(return_value=[f"{name}-model-1", f"{name}-model-2"])
         mp.health_check = AsyncMock(return_value=True)
         reg.register(mp)
@@ -338,6 +342,18 @@ class TestChatCompletionsEndpoint:
             )
         assert resp.status_code == 200
 
+    def test_ollama_chat_completion_success(self, client: TestClient) -> None:
+        """POST /api/v1/chat/completions with provider=ollama succeeds."""
+        mock_reg = _make_mock_registry(["ollama"])
+        with patch("app.api.v1.endpoints.chat.get_registry", return_value=mock_reg):
+            resp = client.post(
+                "/api/v1/chat/completions",
+                json=self._payload(provider="ollama", model="llama3.2"),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["provider"] == "ollama"
+        assert resp.json()["model"] == "llama3.2"
+
 
 # ── GET /api/v1/providers ─────────────────────────────────────────────────────
 
@@ -350,14 +366,14 @@ class TestProvidersListEndpoint:
         assert resp.status_code == 200
 
     def test_returns_providers_list(self, client: TestClient) -> None:
-        mock_reg = _make_mock_registry(["groq", "openai"])
+        mock_reg = _make_mock_registry(["groq", "ollama"])
         with patch("app.api.v1.endpoints.providers.get_registry", return_value=mock_reg):
             resp = client.get("/api/v1/providers")
         data = resp.json()
         assert "providers" in data
         names = {p["name"] for p in data["providers"]}
         assert "groq" in names
-        assert "openai" in names
+        assert "ollama" in names
 
     def test_no_api_keys_in_response(self, client: TestClient) -> None:
         """Provider list never exposes API keys."""

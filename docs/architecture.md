@@ -353,9 +353,9 @@ ProviderRegistry              ← O(1) dict lookup
    ▼
 BaseLLMProvider.chat(request, request_id)
    │
-   ├── OpenAIProvider      → AsyncOpenAI SDK
-   ├── GeminiProvider      → google-generativeai SDK
-   └── GroqProvider        → AsyncGroq SDK
+   ├── GeminiProvider      → google-generativeai Cloud SDK
+   ├── GroqProvider        → AsyncGroq Cloud SDK
+   └── OllamaProvider      → httpx.AsyncClient (Local / Self-Hosted REST API)
                │
                ▼
        Provider API
@@ -383,7 +383,7 @@ BaseLLMProvider.chat(request, request_id)
 class BaseLLMProvider(ABC):
     @property
     @abstractmethod
-    def name(self) -> str: ...          # canonical name: "openai", "groq", "gemini"
+    def name(self) -> str: ...          # canonical name: "gemini", "groq", "ollama"
 
     @abstractmethod
     async def chat(request, request_id) -> ChatCompletionResponse: ...
@@ -396,8 +396,7 @@ class BaseLLMProvider(ABC):
 ```
 
 **Key invariant**: Routes and `ChatService` only ever call `BaseLLMProvider` methods.
-Provider-specific SDK calls, payload transformations, and response parsing
-remain **exclusively** inside each provider adapter file.
+The same `BaseLLMProvider` contract seamlessly supports both cloud-hosted API providers (Gemini, Groq) and local self-hosted runtimes (Ollama).
 
 ---
 
@@ -415,8 +414,8 @@ ProviderRegistry (module-level singleton)
 
 Initialized in lifespan startup:
     for each provider:
-        if api_key present AND enabled:
-            registry.register(Provider(api_key=...))
+        if available (API key present for cloud, or base URL for local):
+            registry.register(Provider(...))
         else:
             log "skipped" (graceful — no crash)
 ```
@@ -425,14 +424,14 @@ Initialized in lifespan startup:
 
 ### Response Normalization
 
-Every provider adapter produces the same `ChatCompletionResponse`:
+Every provider adapter produces the exact same `ChatCompletionResponse`:
 
 ```
 ChatCompletionResponse
 ├── id               "ctx_" + 12 hex chars
 ├── object           "chat.completion"
 ├── created          Unix timestamp
-├── provider         "groq" | "gemini" | "openai"
+├── provider         "gemini" | "groq" | "ollama"
 ├── model            exact model string from provider
 ├── choices[]
 │   ├── index        0-based
@@ -446,11 +445,13 @@ ChatCompletionResponse
 │   └── total_tokens      int | None
 └── metadata
     ├── request_id   from ContextVar (X-Request-ID)
-    └── latency_ms   provider request duration
+    └── latency_ms   provider request duration in milliseconds
 ```
 
-**Token usage is Optional** — never fabricated. Gemini uses
-`candidates_token_count` (normalized to `completion_tokens` internally).
+**Token usage is Optional** — never fabricated.
+- **Ollama**: uses `prompt_eval_count` → `prompt_tokens`, `eval_count` → `completion_tokens`.
+- **Gemini**: uses `candidates_token_count` → `completion_tokens`.
+- **Groq**: uses `usage.prompt_tokens`, `usage.completion_tokens`.
 
 ---
 
@@ -485,12 +486,8 @@ Provider stack traces NEVER reach the client.
 1. **Create** `backend/app/providers/{name}_provider.py`
 2. **Implement** `BaseLLMProvider` — all 4 abstract methods
 3. **Translate** provider errors to `ProviderException` subclasses in `_raise_from_status()`
-4. **Add** config to `Settings`: `{name}_api_key`, `{name}_enabled`, `{name}_available`
-5. **Register** in `main._init_providers()`:
-   ```python
-   if settings.{name}_available:
-       registry.register(NewProvider(api_key=settings.{name}_api_key))
-   ```
+4. **Add** config to `Settings`: `{name}_api_key` or `{name}_base_url`, `{name}_enabled`, `{name}_available`
+5. **Register** in `main._init_providers()`
 6. **Add** to `app/providers/__init__.py` exports
 7. **Add** tests in `tests/test_providers.py`
 
@@ -499,18 +496,19 @@ schemas, or any existing provider.
 
 ---
 
-## Phase 2 New Environment Variables
+## Phase 2 Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROVIDER_TIMEOUT_SECONDS` | `30` | Timeout for all provider HTTP requests |
 | `DEFAULT_PROVIDER` | — | Reserved for Phase 3 routing |
 | `DEFAULT_MODEL` | — | Reserved for Phase 3 routing |
-| `OPENAI_API_KEY` | — | OpenAI API key (blank = provider disabled) |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI base URL (override for Azure etc) |
-| `OPENAI_ENABLED` | `true` | Enable/disable OpenAI |
 | `GEMINI_API_KEY` | — | Google Gemini API key |
 | `GEMINI_ENABLED` | `true` | Enable/disable Gemini |
 | `GROQ_API_KEY` | — | Groq API key |
 | `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | Groq base URL |
 | `GROQ_ENABLED` | `true` | Enable/disable Groq |
+| `OLLAMA_ENABLED` | `true` | Enable/disable Ollama |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL (`http://ollama:11434` in Docker) |
+| `OLLAMA_TIMEOUT_SECONDS` | `60` | Ollama-specific request timeout |
+

@@ -39,7 +39,8 @@ Your Application
 └──────┬──────────────┬──────────────┬─────────┘
        │              │              │
        ▼              ▼              ▼
-    OpenAI         Gemini          Groq
+     Gemini          Groq          Ollama
+    (Cloud)        (Cloud)         (Local)
 ```
 
 ---
@@ -55,8 +56,8 @@ Your Application
 | **Logging** | Loguru |
 | **Frontend** | React 18 · TypeScript · Vite · Tailwind CSS |
 | **Routing** | React Router v6 |
-| **Testing** | pytest · pytest-asyncio · httpx |
-| **Containers** | Docker · Docker Compose |
+| **Testing** | pytest · pytest-asyncio · httpx · respx |
+| **Containers** | Docker · Docker Compose · Ollama |
 
 ---
 
@@ -72,19 +73,19 @@ Your Application
 - 🛡️ **Global error handling** — consistent JSON error envelope, no stack traces exposed
 - 📖 **API documentation** — Swagger UI at `/docs`, ReDoc at `/redoc`
 - 🎨 **React dashboard** — live system status with 30s auto-polling
-- 🐳 **Docker Compose** — full 4-service stack, one command to run
+- 🐳 **Docker Compose** — full multi-service stack, one command to run
 
 ### Phase 2 — Unified Multi-LLM Gateway ✅
-- 🤖 **Three provider adapters** — OpenAI, Google Gemini, Groq (all async)
-- 🔌 **Provider abstraction** — `BaseLLMProvider` ABC, Open/Closed Principle
+- 🤖 **Three active provider adapters** — Google Gemini (Cloud), Groq (Cloud), Ollama (Local / Self-hosted)
+- 🔌 **Provider abstraction** — `BaseLLMProvider` ABC, Open/Closed Principle supporting cloud and local runtimes
 - 📋 **Provider registry** — register, retrieve, discover providers at runtime
 - 🔀 **Unified chat API** — one endpoint, any provider, normalized response
 - 📊 **Token usage normalization** — consistent `prompt/completion/total_tokens` across all providers
 - ⏱️ **Latency tracking** — provider request duration in every response
 - 🛡️ **Error normalization** — 8 typed error codes, correct HTTP status per error type
-- 🔑 **Safe credential handling** — missing keys disable provider gracefully, never logged
-- 🔍 **Provider discovery** — list providers, get details, list models per provider
-- ✅ **99 automated tests** — all passing, zero real API credits required
+- 🔑 **Safe credential handling** — missing keys disable cloud providers gracefully, zero keys needed for Ollama
+- 🔍 **Provider & Model discovery** — list providers, get details, dynamic model discovery (including local Ollama models)
+- ✅ **104 automated tests** — all passing, zero real API credits required
 
 ### Coming Soon
 - 🔐 Authentication & API key management
@@ -211,16 +212,17 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | `PROVIDER_TIMEOUT_SECONDS` | `30` | Timeout for all provider requests |
 | `DEFAULT_PROVIDER` | — | Optional default provider name |
 | `DEFAULT_MODEL` | — | Optional default model |
-| `OPENAI_API_KEY` | — | OpenAI API key (blank = disabled) |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI base URL |
-| `OPENAI_ENABLED` | `true` | Enable/disable OpenAI |
 | `GEMINI_API_KEY` | — | Google Gemini API key (blank = disabled) |
 | `GEMINI_ENABLED` | `true` | Enable/disable Gemini |
 | `GROQ_API_KEY` | — | Groq API key (blank = disabled) |
 | `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | Groq base URL |
 | `GROQ_ENABLED` | `true` | Enable/disable Groq |
+| `OLLAMA_ENABLED` | `true` | Enable/disable Ollama |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama base URL (`http://ollama:11434` in Docker) |
+| `OLLAMA_TIMEOUT_SECONDS` | `60` | Ollama-specific request timeout |
 
-> A missing or blank API key disables the provider gracefully. The application starts normally and returns `INVALID_PROVIDER` when that provider is requested.
+> **Cloud Providers (Gemini, Groq):** A missing or blank API key disables the provider gracefully.  
+> **Local Provider (Ollama):** Requires no API key. Ensure Ollama is running and has models pulled.
 
 ---
 
@@ -260,10 +262,22 @@ Independently checks all dependencies. Returns `200 OK` when healthy, `503 Servi
 
 ### `POST /api/v1/chat/completions`
 
-Send a chat request to any provider using the same schema.
+Send a chat request to any provider using the exact same schema.
 
 ```bash
-# Groq
+# 1. Local Ollama (e.g. llama3.2, qwen2.5)
+curl -X POST http://localhost:8000/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Request-ID: ollama-req-001" \
+  -d '{
+    "provider": "ollama",
+    "model": "llama3.2",
+    "messages": [{"role": "user", "content": "Explain Docker in simple terms."}],
+    "temperature": 0.7,
+    "max_tokens": 500
+  }'
+
+# 2. Groq (Cloud SDK)
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
@@ -274,7 +288,7 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
     "max_tokens": 500
   }'
 
-# Gemini
+# 3. Google Gemini (Cloud SDK)
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
@@ -283,15 +297,28 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
     "messages": [{"role": "user", "content": "Explain Docker in simple terms."}]
   }'
 
-# OpenAI
-curl -X POST http://localhost:8000/api/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "openai",
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "Explain Docker in simple terms."}]
-  }'
 ```
+
+---
+
+### Local Ollama Setup & Model Pulling
+
+To run local models without external API keys:
+
+1. **Install and start Ollama:**
+   - Download from [ollama.com](https://ollama.com) or run via Docker Compose (`docker compose up ollama`).
+2. **Pull a lightweight model:**
+   ```bash
+   ollama pull llama3.2
+   # or
+   ollama pull qwen2.5:0.5b
+   ```
+3. **Verify installed models dynamically via Cortex Gateway:**
+   ```bash
+   curl http://localhost:8000/api/v1/providers/ollama/models
+   ```
+
+---
 
 **Normalized response (identical shape for all providers):**
 ```json
@@ -299,8 +326,8 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
   "id": "ctx_abc123def456",
   "object": "chat.completion",
   "created": 1710000000,
-  "provider": "groq",
-  "model": "llama-3.3-70b-versatile",
+  "provider": "ollama",
+  "model": "llama3.2",
   "choices": [{
     "index": 0,
     "message": {"role": "assistant", "content": "Docker is ..."},
@@ -313,24 +340,24 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
   },
   "metadata": {
     "request_id": "550e8400-e29b-41d4-a716-446655440000",
-    "latency_ms": 423.5
+    "latency_ms": 320.5
   }
 }
 ```
 
 ### `GET /api/v1/providers`
 ```json
-{"providers": [{"name": "groq", "enabled": true, "available": true}, ...]}
+{"providers": [{"name": "gemini", "enabled": true, "available": true}, {"name": "groq", "enabled": true, "available": true}, {"name": "ollama", "enabled": true, "available": true}]}
 ```
 
 ### `GET /api/v1/providers/{provider}`
 ```json
-{"name": "groq", "enabled": true, "available": true, "capabilities": ["chat"]}
+{"name": "ollama", "enabled": true, "available": true, "capabilities": ["chat"]}
 ```
 
 ### `GET /api/v1/providers/{provider}/models`
 ```json
-{"provider": "groq", "models": ["llama-3.3-70b-versatile", "llama3-8b-8192", ...]}
+{"provider": "ollama", "models": ["llama3.2:latest", "qwen2.5:latest"]}
 ```
 
 ### Error Response Format

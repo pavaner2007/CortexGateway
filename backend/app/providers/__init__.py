@@ -26,6 +26,7 @@ from app.providers.exceptions import (
 )
 from app.providers.gemini_provider import GeminiProvider
 from app.providers.groq_provider import GroqProvider
+from app.providers.ollama_provider import OllamaProvider
 from app.providers.openai_provider import OpenAIProvider
 from app.providers.registry import ProviderRegistry, get_registry, registry
 
@@ -34,9 +35,10 @@ __all__ = [
     "ProviderRegistry",
     "get_registry",
     "registry",
-    "OpenAIProvider",
     "GeminiProvider",
     "GroqProvider",
+    "OllamaProvider",
+    "OpenAIProvider",
     "ProviderException",
     "InvalidProviderError",
     "ProviderDisabledError",

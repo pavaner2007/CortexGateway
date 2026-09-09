@@ -101,21 +101,21 @@ class TestProviderRegistry:
         """is_registered returns correct booleans."""
         reg = ProviderRegistry()
         mock_provider = MagicMock()
-        mock_provider.name = "openai"
+        mock_provider.name = "ollama"
         reg.register(mock_provider)
-        assert reg.is_registered("openai") is True
+        assert reg.is_registered("ollama") is True
         assert reg.is_registered("gemini") is False
 
     def test_list_providers(self) -> None:
         """list_providers returns safe metadata without secrets."""
         reg = ProviderRegistry()
-        for name in ["groq", "openai"]:
+        for name in ["groq", "ollama"]:
             mp = MagicMock()
             mp.name = name
             reg.register(mp)
         providers = reg.list_providers()
         names = {p.name for p in providers}
-        assert names == {"groq", "openai"}
+        assert names == {"groq", "ollama"}
         # Verify no secrets are in provider info
         for p in providers:
             assert not hasattr(p, "api_key")
@@ -123,11 +123,11 @@ class TestProviderRegistry:
     def test_provider_names_sorted(self) -> None:
         """provider_names returns sorted list."""
         reg = ProviderRegistry()
-        for name in ["openai", "groq", "gemini"]:
+        for name in ["ollama", "groq", "gemini"]:
             mp = MagicMock()
             mp.name = name
             reg.register(mp)
-        assert reg.provider_names == ["gemini", "groq", "openai"]
+        assert reg.provider_names == ["gemini", "groq", "ollama"]
 
 
 # ── Schema Validation Tests ───────────────────────────────────────────────────
@@ -356,83 +356,192 @@ class TestGroqProviderNormalization:
         assert exc_info.value.status_code == 502
 
 
-class TestOpenAIProviderNormalization:
-    """Test OpenAI response normalization (all external calls mocked)."""
+class TestOllamaProviderNormalization:
+    """Test Ollama response normalization and error mappings (all HTTP calls mocked)."""
 
     @pytest.mark.asyncio
     async def test_chat_returns_normalized_response(self) -> None:
-        """OpenAI chat returns Cortex ChatCompletionResponse."""
-        with patch("app.providers.openai_provider.AsyncOpenAI") as MockOAI:
-            mock_client = MagicMock()
-            MockOAI.return_value = mock_client
+        """Ollama chat returns normalized Cortex ChatCompletionResponse."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "model": "llama3.2",
+            "created_at": "2026-09-09T00:00:00Z",
+            "message": {
+                "role": "assistant",
+                "content": "Docker is a platform for running containers.",
+            },
+            "done_reason": "stop",
+            "done": True,
+            "prompt_eval_count": 15,
+            "eval_count": 25,
+        }
 
-            mock_choice = MagicMock()
-            mock_choice.index = 0
-            mock_choice.message.content = "OpenAI response"
-            mock_choice.finish_reason = "stop"
+        with patch("app.providers.ollama_provider.httpx.AsyncClient") as MockClient:
+            mock_client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+            mock_client_instance.post.return_value = mock_resp
 
-            mock_usage = MagicMock()
-            mock_usage.prompt_tokens = 5
-            mock_usage.completion_tokens = 10
-            mock_usage.total_tokens = 15
+            from app.providers.ollama_provider import OllamaProvider
+            provider = OllamaProvider(base_url="http://localhost:11434")
+            req = _make_request(provider="ollama", model="llama3.2")
+            response = await provider.chat(req, "ollama-req-1")
 
-            mock_completion = MagicMock()
-            mock_completion.model = "gpt-4o-mini"
-            mock_completion.choices = [mock_choice]
-            mock_completion.usage = mock_usage
-
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
-
-            from app.providers.openai_provider import OpenAIProvider
-            provider = OpenAIProvider(api_key="test-key")
-            req = _make_request(provider="openai", model="gpt-4o-mini")
-            response = await provider.chat(req, "openai-req-1")
-
-        assert response.provider == "openai"
-        assert response.choices[0].message.content == "OpenAI response"
-        assert response.usage.total_tokens == 15
-        assert response.metadata.request_id == "openai-req-1"
-
-    @pytest.mark.asyncio
-    async def test_openai_timeout_raises_provider_timeout(self) -> None:
-        """OpenAI APITimeoutError → ProviderTimeoutError."""
-        from openai import APITimeoutError
-
-        with patch("app.providers.openai_provider.AsyncOpenAI") as MockOAI:
-            mock_client = MagicMock()
-            MockOAI.return_value = mock_client
-            mock_client.chat.completions.create = AsyncMock(
-                side_effect=APITimeoutError(request=MagicMock())
-            )
-
-            from app.providers.openai_provider import OpenAIProvider
-            provider = OpenAIProvider(api_key="test-key")
-            with pytest.raises(ProviderTimeoutError):
-                await provider.chat(_make_request(provider="openai", model="gpt-4o-mini"), "t1")
+        assert isinstance(response, ChatCompletionResponse)
+        assert response.provider == "ollama"
+        assert response.model == "llama3.2"
+        assert response.choices[0].message.content == "Docker is a platform for running containers."
+        assert response.choices[0].finish_reason == "stop"
+        assert response.usage.prompt_tokens == 15
+        assert response.usage.completion_tokens == 25
+        assert response.usage.total_tokens == 40
+        assert response.metadata.request_id == "ollama-req-1"
+        assert response.metadata.latency_ms >= 0
 
     @pytest.mark.asyncio
-    async def test_openai_auth_error_raises_provider_auth_error(self) -> None:
-        """OpenAI 401 → ProviderAuthError."""
-        from openai import APIStatusError
+    async def test_chat_maps_options_properly(self) -> None:
+        """Verify temperature, top_p, and max_tokens (num_predict) mapped to Ollama options."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "model": "llama3.2",
+            "message": {"role": "assistant", "content": "ok"},
+            "done": True,
+        }
 
-        with patch("app.providers.openai_provider.AsyncOpenAI") as MockOAI:
-            mock_client = MagicMock()
-            MockOAI.return_value = mock_client
-            mock_response = MagicMock()
-            mock_response.status_code = 401
-            mock_response.headers = {}
-            mock_client.chat.completions.create = AsyncMock(
-                side_effect=APIStatusError(
-                    "Unauthorized", response=mock_response, body={}
-                )
+        with patch("app.providers.ollama_provider.httpx.AsyncClient") as MockClient:
+            mock_client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+            mock_client_instance.post.return_value = mock_resp
+
+            from app.providers.ollama_provider import OllamaProvider
+            provider = OllamaProvider(base_url="http://localhost:11434")
+            req = ChatCompletionRequest(
+                provider="ollama",
+                model="llama3.2",
+                messages=[ChatMessage(role="user", content="Hi")],
+                temperature=0.8,
+                top_p=0.95,
+                max_tokens=250,
+                stop=["END"],
             )
+            await provider.chat(req, "req-options")
 
-            from app.providers.openai_provider import OpenAIProvider
-            provider = OpenAIProvider(api_key="bad-key")
-            with pytest.raises(ProviderAuthError):
+            mock_client_instance.post.assert_called_once()
+            _, kwargs = mock_client_instance.post.call_args
+            payload = kwargs["json"]
+            assert payload["options"]["temperature"] == 0.8
+            assert payload["options"]["top_p"] == 0.95
+            assert payload["options"]["num_predict"] == 250
+            assert payload["options"]["stop"] == ["END"]
+
+    @pytest.mark.asyncio
+    async def test_ollama_timeout_raises_provider_timeout(self) -> None:
+        """Ollama timeout raises ProviderTimeoutError."""
+        import httpx
+
+        with patch("app.providers.ollama_provider.httpx.AsyncClient") as MockClient:
+            mock_client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+            mock_client_instance.post.side_effect = httpx.TimeoutException("Timeout")
+
+            from app.providers.ollama_provider import OllamaProvider
+            provider = OllamaProvider(base_url="http://localhost:11434")
+            with pytest.raises(ProviderTimeoutError) as exc_info:
+                await provider.chat(_make_request(provider="ollama"), "req-t")
+
+        assert exc_info.value.code == "PROVIDER_TIMEOUT"
+        assert exc_info.value.status_code == 504
+
+    @pytest.mark.asyncio
+    async def test_ollama_connection_error_raises_provider_unavailable(self) -> None:
+        """Ollama connection error raises ProviderUnavailableError."""
+        import httpx
+
+        with patch("app.providers.ollama_provider.httpx.AsyncClient") as MockClient:
+            mock_client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+            mock_client_instance.post.side_effect = httpx.ConnectError("Connection refused")
+
+            from app.providers.ollama_provider import OllamaProvider
+            provider = OllamaProvider(base_url="http://localhost:11434")
+            with pytest.raises(ProviderUnavailableError) as exc_info:
+                await provider.chat(_make_request(provider="ollama"), "req-c")
+
+        assert exc_info.value.code == "PROVIDER_UNAVAILABLE"
+        assert exc_info.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_ollama_model_not_found_raises_invalid_model(self) -> None:
+        """Ollama 404 with model not found raises InvalidModelError."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.text = '{"error": "model \'llama99\' not found"}'
+        mock_resp.json.return_value = {"error": "model 'llama99' not found"}
+
+        with patch("app.providers.ollama_provider.httpx.AsyncClient") as MockClient:
+            mock_client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+            mock_client_instance.post.return_value = mock_resp
+
+            from app.providers.exceptions import InvalidModelError
+            from app.providers.ollama_provider import OllamaProvider
+            provider = OllamaProvider(base_url="http://localhost:11434")
+            with pytest.raises(InvalidModelError) as exc_info:
                 await provider.chat(
-                    _make_request(provider="openai", model="gpt-4o-mini"), "t2"
+                    _make_request(provider="ollama", model="llama99"), "req-m"
                 )
+
+        assert exc_info.value.code == "INVALID_MODEL"
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_ollama_list_models_returns_names(self) -> None:
+        """Ollama list_models fetches and parses models from /api/tags."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "models": [
+                {"name": "llama3.2:latest"},
+                {"name": "qwen2.5:latest"},
+            ]
+        }
+
+        with patch("app.providers.ollama_provider.httpx.AsyncClient") as MockClient:
+            mock_client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+            mock_client_instance.get.return_value = mock_resp
+
+            from app.providers.ollama_provider import OllamaProvider
+            provider = OllamaProvider(base_url="http://localhost:11434")
+            models = await provider.list_models()
+
+        assert models == ["llama3.2:latest", "qwen2.5:latest"]
+
+    @pytest.mark.asyncio
+    async def test_ollama_health_check(self) -> None:
+        """Ollama health check returns True on 200 and False on failure."""
+        import httpx
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        with patch("app.providers.ollama_provider.httpx.AsyncClient") as MockClient:
+            mock_client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+            mock_client_instance.get.return_value = mock_resp
+
+            from app.providers.ollama_provider import OllamaProvider
+            provider = OllamaProvider(base_url="http://localhost:11434")
+            assert await provider.health_check() is True
+
+        with patch("app.providers.ollama_provider.httpx.AsyncClient") as MockClient:
+            mock_client_instance = AsyncMock()
+            MockClient.return_value.__aenter__.return_value = mock_client_instance
+            mock_client_instance.get.side_effect = httpx.ConnectError("down")
+
+            provider = OllamaProvider(base_url="http://localhost:11434")
+            assert await provider.health_check() is False
 
 
 class TestGeminiProviderNormalization:

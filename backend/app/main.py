@@ -41,29 +41,17 @@ def _init_providers() -> None:
     """
     Initialize and register LLM provider adapters.
 
-    Providers are registered only when:
-      1. The provider is enabled in settings.
-      2. A non-empty API key is configured.
+    Active Phase 2 Providers:
+      1. Gemini (Cloud SDK - requires GEMINI_API_KEY)
+      2. Groq (Cloud SDK - requires GROQ_API_KEY)
+      3. Ollama (Local HTTP - requires OLLAMA_BASE_URL)
 
     Missing credentials do NOT crash startup — the provider is simply
     not registered and will return INVALID_PROVIDER when requested.
     """
     from app.providers.gemini_provider import GeminiProvider
     from app.providers.groq_provider import GroqProvider
-    from app.providers.openai_provider import OpenAIProvider
-
-    if settings.openai_available:
-        registry.register(
-            OpenAIProvider(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_base_url,
-                timeout=settings.provider_timeout_seconds,
-            )
-        )
-    else:
-        logger.info(
-            "OpenAI provider skipped (disabled or missing API key)",
-        )
+    from app.providers.ollama_provider import OllamaProvider
 
     if settings.gemini_available:
         registry.register(
@@ -88,6 +76,18 @@ def _init_providers() -> None:
     else:
         logger.info(
             "Groq provider skipped (disabled or missing API key)",
+        )
+
+    if settings.ollama_available:
+        registry.register(
+            OllamaProvider(
+                base_url=settings.ollama_base_url,
+                timeout=settings.ollama_timeout_seconds,
+            )
+        )
+    else:
+        logger.info(
+            "Ollama provider skipped (disabled or missing base URL)",
         )
 
     registered = registry.provider_names

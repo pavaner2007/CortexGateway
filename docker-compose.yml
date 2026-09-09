@@ -81,6 +81,7 @@ services:
       ENVIRONMENT: development
       LOG_LEVEL: INFO
       CORS_ORIGINS: "http://localhost:5173,http://frontend:5173"
+      OLLAMA_BASE_URL: "http://ollama:11434"
     ports:
       - "8000:8000"
     depends_on:
@@ -94,6 +95,22 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  # ── Ollama (Local / Self-Hosted LLM Runtime) ────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cortex-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # ── Frontend ────────────────────────────────────────────────────────────────
   frontend:
@@ -115,4 +132,6 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  ollama_data:
     driver: local
