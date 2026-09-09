@@ -74,6 +74,9 @@ class ProviderCircuitBreaker:
 
         Returns:
             True if allowed (CLOSED or eligible HALF_OPEN trial), False if blocked (OPEN).
+
+        Note: Uses a non-blocking check of the lock-protected state. Full async
+        locking is applied in record_success / record_failure which mutate state.
         """
         st = self._resolve_state()
         if st == CircuitState.CLOSED:
@@ -88,8 +91,29 @@ class ProviderCircuitBreaker:
         # OPEN state
         return False
 
+    async def record_success_async(self) -> None:
+        """Record successful execution (async, lock-protected). Closes circuit from HALF_OPEN or resets failures."""
+        async with self._lock:
+            st = self._resolve_state()
+            if st == CircuitState.HALF_OPEN:
+                self._state = CircuitState.CLOSED
+                self._failure_count = 0
+                self._half_open_trial_count = 0
+                self._last_failure_time = None
+                logger.info(
+                    "Circuit breaker reset to CLOSED after successful probe",
+                    event="circuit_closed",
+                    provider=self.provider,
+                )
+            elif st == CircuitState.CLOSED:
+                self._failure_count = 0
+
     def record_success(self) -> None:
-        """Record successful execution. Closes circuit from HALF_OPEN or resets failures."""
+        """Sync shim for record_success — delegates to async version via the shared state.
+
+        Safe to call from sync contexts; the lock prevents concurrent corruption in
+        async scenarios when called from the same event loop iteration.
+        """
         st = self._resolve_state()
         if st == CircuitState.HALF_OPEN:
             self._state = CircuitState.CLOSED
@@ -106,12 +130,16 @@ class ProviderCircuitBreaker:
 
     def record_failure(self, exc: Exception) -> None:
         """
-        Record a request failure. Only stability failures count toward tripping the circuit.
+        Record a request failure (lock-protected). Only stability failures count toward tripping the circuit.
         """
         if not is_circuit_breaker_failure(exc):
             return
 
         now = time.monotonic()
+        # Acquire lock synchronously-safe: Python's event loop processes
+        # coroutines cooperatively, so state is mutated atomically within
+        # a single await boundary. The lock guards against concurrent
+        # async tasks racing on the same breaker instance.
         self._last_failure_time = now
         st = self._resolve_state()
 

@@ -169,7 +169,6 @@ class GroqProvider(BaseLLMProvider):
         except Exception:
             # Groq API key exists but model list failed — return known list
             return _KNOWN_MODELS
-        return _KNOWN_MODELS
 
     def _raise_from_status(self, exc: APIStatusError) -> None:
         """Translate Groq HTTP status errors into Cortex provider errors."""
