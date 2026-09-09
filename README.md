@@ -279,14 +279,13 @@ Independently checks all dependencies. Returns `200 OK` when healthy, `503 Servi
 
 ---
 
-## Phase 2 API — Unified Chat Completions
+## Unified Chat API & Routing Examples
 
 ### `POST /api/v1/chat/completions`
 
 Send a chat request to any provider using the exact same schema.
 
-# ── Phase 3: Intelligent Routing Examples ──────────────────────────────────
-
+```bash
 # 1. Automatic Multi-Factor Routing (model="auto")
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
