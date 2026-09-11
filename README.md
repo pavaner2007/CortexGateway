@@ -109,6 +109,7 @@ Your Application
 - **Capability-Preserving Fallback** — Fallbacks strictly satisfy original request capability constraints (e.g., vision).
 - **Rich Reliability Metadata** — Responses carry `selected_provider`, `original_provider`, `failover_triggered`, `retry_count`, `failover_attempts`, and `circuit_breaker_state`.
 - **154 automated tests** — 100% passing across Phase 1, Phase 2, Phase 3, and Phase 4 with zero real API credits required.
+- **Code quality** — dead code removed, async lock protection added to circuit breaker state machine.
 
 ### Planned Features
 - Authentication & API key management
@@ -197,7 +198,7 @@ pytest tests/ -v
 ```
 
 ```
-134 passed in 0.71s
+154 passed in 3.80s
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -235,15 +236,43 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | `DEFAULT_MODEL` | — | Optional default model |
 | `GEMINI_API_KEY` | — | Google Gemini API key (blank = disabled) |
 | `GEMINI_ENABLED` | `true` | Enable/disable Gemini |
+| `GEMINI_TIMEOUT_SECONDS` | `30` | Gemini-specific request timeout |
 | `GROQ_API_KEY` | — | Groq API key (blank = disabled) |
 | `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | Groq base URL |
 | `GROQ_ENABLED` | `true` | Enable/disable Groq |
+| `GROQ_TIMEOUT_SECONDS` | `30` | Groq-specific request timeout |
 | `OLLAMA_ENABLED` | `true` | Enable/disable Ollama |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama base URL (`http://ollama:11434` in Docker) |
 | `OLLAMA_TIMEOUT_SECONDS` | `60` | Ollama-specific request timeout |
 
 > **Cloud Providers (Gemini, Groq):** A missing or blank API key disables the provider gracefully.  
 > **Local Provider (Ollama):** Requires no API key. Ensure Ollama is running and has models pulled.
+
+### Routing Configuration (Phase 3)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ROUTING_ENABLED` | `true` | Enable intelligent routing engine |
+| `ROUTING_DEFAULT_MODE` | `auto` | Default mode: `auto` \| `lowest_cost` \| `lowest_latency` \| `best_available` \| `capability_based` |
+| `ROUTING_HEALTH_WEIGHT` | `0.30` | Weight for provider health in scoring |
+| `ROUTING_SUCCESS_RATE_WEIGHT` | `0.30` | Weight for historical success rate in scoring |
+| `ROUTING_LATENCY_WEIGHT` | `0.20` | Weight for latency in scoring |
+| `ROUTING_COST_WEIGHT` | `0.20` | Weight for cost per 1k tokens in scoring |
+| `ROUTING_OLLAMA_COST_PER_1K` | `0.00` | Configurable cost for local Ollama models |
+
+### Reliability Configuration (Phase 4)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELIABILITY_TOTAL_REQUEST_TIMEOUT_SECONDS` | `120` | Hard deadline for entire request (retries + failovers) |
+| `RELIABILITY_MAX_RETRIES` | `2` | Maximum retry attempts per provider |
+| `RELIABILITY_RETRY_BASE_DELAY_SECONDS` | `0.25` | Base delay for exponential backoff |
+| `RELIABILITY_RETRY_MAX_DELAY_SECONDS` | `2.0` | Maximum backoff delay cap |
+| `RELIABILITY_RETRY_JITTER` | `true` | Add randomized jitter to backoff delays |
+| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Consecutive failures before circuit trips OPEN |
+| `CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `30.0` | Seconds before OPEN circuit transitions to HALF_OPEN |
+| `CIRCUIT_BREAKER_HALF_OPEN_TRIALS` | `1` | Trial requests allowed in HALF_OPEN state |
+| `RELIABILITY_MAX_FAILOVER_ATTEMPTS` | `2` | Maximum failover candidates tried per request |
 
 ---
 
@@ -353,7 +382,7 @@ To run local models without external API keys:
 
 ---
 
-**Normalized response (identical shape for all providers):**
+**Normalized response (identical shape for all providers, with Phase 4 reliability metadata):**
 ```json
 {
   "id": "ctx_abc123def456",
@@ -373,7 +402,15 @@ To run local models without external API keys:
   },
   "metadata": {
     "request_id": "550e8400-e29b-41d4-a716-446655440000",
-    "latency_ms": 320.5
+    "latency_ms": 320.5,
+    "routing_mode": "auto",
+    "selected_provider": "ollama",
+    "selected_model": "llama3.2",
+    "original_provider": "groq",
+    "failover_triggered": true,
+    "retry_count": 1,
+    "failover_attempts": 1,
+    "circuit_breaker_state": "closed"
   }
 }
 ```
@@ -426,39 +463,58 @@ CortexGateway/
 ├── backend/
 │   ├── app/
 │   │   ├── api/v1/endpoints/
-│   │   │   ├── health.py          # GET /, /version, /health
-│   │   │   ├── chat.py            # POST /api/v1/chat/completions
-│   │   │   └── providers.py       # GET /api/v1/providers/*
+│   │   │   ├── health.py              # GET /, /version, /health
+│   │   │   ├── chat.py                # POST /api/v1/chat/completions
+│   │   │   └── providers.py           # GET /api/v1/providers/*
 │   │   ├── config/
-│   │   │   └── settings.py        # Pydantic Settings v2 (+ provider config)
+│   │   │   └── settings.py            # Pydantic Settings v2 (all phases)
 │   │   ├── core/
-│   │   │   └── logging.py         # Loguru configuration
+│   │   │   └── logging.py             # Loguru structured logging
 │   │   ├── database/
-│   │   │   └── session.py         # SQLAlchemy 2.x async engine
+│   │   │   └── session.py             # SQLAlchemy 2.x async engine
 │   │   ├── middleware/
-│   │   │   ├── request_id.py      # X-Request-ID propagation
-│   │   │   └── logging.py         # Request/response logging
+│   │   │   ├── request_id.py          # X-Request-ID propagation
+│   │   │   └── logging.py             # Request/response logging
 │   │   ├── providers/
-│   │   │   ├── base.py            # BaseLLMProvider ABC
-│   │   │   ├── registry.py        # ProviderRegistry singleton
-│   │   │   ├── exceptions.py      # Typed provider exception hierarchy
-│   │   │   ├── openai_provider.py # OpenAI async adapter
-│   │   │   ├── gemini_provider.py # Google Gemini async adapter
-│   │   │   └── groq_provider.py   # Groq async adapter
+│   │   │   ├── base.py                # BaseLLMProvider ABC
+│   │   │   ├── registry.py            # ProviderRegistry singleton
+│   │   │   ├── exceptions.py          # Typed provider exception hierarchy
+│   │   │   ├── gemini_provider.py     # Google Gemini async adapter
+│   │   │   ├── groq_provider.py       # Groq async adapter
+│   │   │   ├── ollama_provider.py     # Ollama local async adapter
+│   │   │   └── openai_provider.py     # OpenAI async adapter (inactive)
+│   │   ├── routing/                   # Phase 3 — Intelligent Routing Engine
+│   │   │   ├── router.py              # RoutingEngine orchestrator
+│   │   │   ├── candidates.py          # CandidateBuilder
+│   │   │   ├── scorer.py              # CandidateScorer (weighted scoring)
+│   │   │   ├── stats.py               # ProviderStatsTracker (rolling metrics)
+│   │   │   ├── metadata.py            # ModelMetadataCatalog
+│   │   │   ├── policies.py            # RoutingPolicyRegistry (mode weights)
+│   │   │   ├── models.py              # RoutingCandidate, RoutingDecision
+│   │   │   └── exceptions.py          # Routing-specific exceptions
+│   │   ├── reliability/               # Phase 4 — Reliability and Resilience
+│   │   │   ├── executor.py            # ReliabilityExecutor (retries, failover)
+│   │   │   ├── circuit_breaker.py     # 3-state circuit breaker per provider
+│   │   │   ├── retry.py               # Exponential backoff + jitter policy
+│   │   │   ├── failover.py            # FailoverSelector (Phase 3 scorer)
+│   │   │   ├── errors.py              # Transient/circuit failure classification
+│   │   │   └── models.py              # ReliabilityContext, AttemptRecord
 │   │   ├── schemas/
-│   │   │   ├── responses.py       # Phase 1 shared Pydantic v2 models
-│   │   │   └── chat.py            # Phase 2 chat request/response schemas
+│   │   │   ├── responses.py           # Shared Pydantic v2 response models
+│   │   │   └── chat.py                # Chat request/response + reliability metadata
 │   │   ├── services/
-│   │   │   └── chat_service.py    # ChatService orchestration layer
+│   │   │   └── chat_service.py        # ChatService — routing + reliability orchestration
 │   │   ├── utils/
-│   │   │   └── redis_client.py    # Async Redis client
-│   │   ├── exceptions.py          # Global exception handlers
-│   │   └── main.py                # FastAPI app + lifespan
+│   │   │   └── redis_client.py        # Async Redis client
+│   │   ├── exceptions.py              # Global exception handlers
+│   │   └── main.py                    # FastAPI app + lifespan
 │   ├── tests/
-│   │   ├── conftest.py            # Fixtures (DB/Redis mocked)
-│   │   ├── test_endpoints.py      # 33 Phase 1 endpoint tests
-│   │   ├── test_providers.py      # 32 provider unit tests
-│   │   └── test_chat_api.py       # 34 Phase 2 API tests
+│   │   ├── conftest.py                # Fixtures (DB/Redis mocked)
+│   │   ├── test_endpoints.py          # Phase 1 endpoint tests
+│   │   ├── test_providers.py          # Phase 2 provider unit tests
+│   │   ├── test_chat_api.py           # Phase 2 API integration tests
+│   │   ├── test_routing.py            # Phase 3 routing engine tests
+│   │   └── test_reliability.py        # Phase 4 reliability tests
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
@@ -466,12 +522,12 @@ CortexGateway/
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── api/health.ts          # Type-safe API client
+│   │   ├── api/health.ts              # Type-safe API client
 │   │   ├── components/
-│   │   │   ├── Layout.tsx         # Sidebar + header shell
-│   │   │   └── StatusCard.tsx     # Reusable status card
+│   │   │   ├── Layout.tsx             # Sidebar + header shell
+│   │   │   └── StatusCard.tsx         # Reusable status card
 │   │   └── pages/
-│   │       └── Dashboard.tsx      # Live health dashboard
+│   │       └── Dashboard.tsx          # Live health dashboard
 │   ├── Dockerfile
 │   ├── package.json
 │   └── vite.config.ts
