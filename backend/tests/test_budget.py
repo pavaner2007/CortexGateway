@@ -544,3 +544,501 @@ def test_budget_ownership_no_cross_team():
     exc = BudgetExceeded(team_id="team-alpha", remaining=0.05)
     assert exc.team_id == "team-alpha"
     assert exc.remaining == 0.05
+
+
+# ── DOWNGRADE Policy Integration Tests (Gap 1) ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_service_budget_downgrade_switches_to_cheaper_provider():
+    """
+    When team has DOWNGRADE policy and estimated cost exceeds remaining budget:
+    1. _attempt_budget_downgrade is invoked
+    2. Builds candidates and filters to affordable ones
+    3. Scores and selects the cheaper provider
+    4. Request completes with downgraded provider and budget_downgraded=True in metadata
+    """
+    from app.services.chat_service import ChatService
+    from app.schemas.chat import ChatCompletionRequest, ChatMessage
+    from app.providers.registry import ProviderRegistry
+    from app.routing.router import RoutingEngine
+    from app.reliability.executor import ReliabilityExecutor
+    from app.auth.schemas import RequestContext
+    from app.schemas.chat import (
+        ChatCompletionChoice,
+        ChatCompletionResponse,
+        ChatMessageResponse,
+        ResponseMetadata,
+        UsageMetadata,
+    )
+
+    # 1. Setup mock providers: expensive groq vs cheap gemini
+    registry = ProviderRegistry()
+
+    mock_groq = MagicMock()
+    mock_groq.name = "groq"
+    mock_groq.health_check = AsyncMock(return_value=True)
+    mock_groq.list_models = AsyncMock(return_value=["llama-3.3-70b-versatile"])
+    mock_groq.chat = AsyncMock(
+        return_value=ChatCompletionResponse(
+            provider="groq",
+            model="llama-3.3-70b-versatile",
+            choices=[ChatCompletionChoice(index=0, message=ChatMessageResponse(content="Groq response"), finish_reason="stop")],
+            usage=UsageMetadata(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+            metadata=ResponseMetadata(request_id="req-1", latency_ms=100.0, selected_provider="groq", selected_model="llama-3.3-70b-versatile"),
+        )
+    )
+    registry.register(mock_groq)
+
+    mock_gemini = MagicMock()
+    mock_gemini.name = "gemini"
+    mock_gemini.health_check = AsyncMock(return_value=True)
+    mock_gemini.list_models = AsyncMock(return_value=["gemini-1.5-flash"])
+    mock_gemini.chat = AsyncMock(
+        return_value=ChatCompletionResponse(
+            provider="gemini",
+            model="gemini-1.5-flash",
+            choices=[ChatCompletionChoice(index=0, message=ChatMessageResponse(content="Gemini response"), finish_reason="stop")],
+            usage=UsageMetadata(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+            metadata=ResponseMetadata(request_id="req-1", latency_ms=80.0, selected_provider="gemini", selected_model="gemini-1.5-flash"),
+        )
+    )
+    registry.register(mock_gemini)
+
+    catalog = ModelMetadataCatalog()
+    # expensive groq ($0.01 per 1k tokens)
+    catalog._catalog["groq:llama-3.3-70b-versatile"] = ModelMetadata(
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        cost_per_1k_tokens=0.01,
+        input_cost_per_1k=0.01,
+        output_cost_per_1k=0.01,
+        capabilities=["text", "code"],
+        context_window=128000,
+        baseline_latency_ms=150.0,
+    )
+    # cheap gemini ($0.0001 per 1k tokens)
+    catalog._catalog["gemini:gemini-1.5-flash"] = ModelMetadata(
+        provider="gemini",
+        model="gemini-1.5-flash",
+        cost_per_1k_tokens=0.0001,
+        input_cost_per_1k=0.0001,
+        output_cost_per_1k=0.0001,
+        capabilities=["text", "code"],
+        context_window=128000,
+        baseline_latency_ms=80.0,
+    )
+    calc = CostCalculator(catalog)
+
+    # 2. Mock BudgetService with DOWNGRADE policy and remaining budget = $0.001
+    mock_budget = _make_budget(
+        team_id="team-downgrade",
+        limit_amount=1.0,
+        current_usage=0.999,  # remaining = 0.001
+        reserved=0.0,
+        policy="DOWNGRADE",
+    )
+    mock_budget.remaining_amount = 0.001
+
+    mock_budget_service = AsyncMock(spec=BudgetService)
+    mock_budget_service.get_budget = AsyncMock(return_value=mock_budget)
+    mock_budget_service.check_and_reserve = AsyncMock(return_value=(mock_budget, False))
+    mock_budget_service.reconcile = AsyncMock(return_value=mock_budget)
+
+    # 3. Create ChatService
+    service = ChatService(registry=registry)
+    context = _make_context(team_id="team-downgrade")
+
+    # Explicit manual request targeting the expensive groq model (~0.015 estimated cost > 0.001 remaining)
+    request = ChatCompletionRequest(
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        messages=[ChatMessage(role="user", content="Test prompt" * 100)],
+        max_tokens=500,
+    )
+
+    response = await service.complete(
+        request=request,
+        request_id="req-1",
+        context=context,
+        budget_service=mock_budget_service,
+        cost_calculator=calc,
+    )
+
+    # Assertions
+    assert response.metadata.budget_downgraded is True
+    # Verify execution went to gemini, not groq
+    assert response.provider == "gemini"
+    assert response.model == "gemini-1.5-flash"
+    mock_gemini.chat.assert_called_once()
+    mock_groq.chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_service_budget_downgrade_no_affordable_candidate_raises_budget_exceeded():
+    """When no candidates fit within remaining budget, raises BudgetExceeded (402)."""
+    from app.services.chat_service import ChatService
+    from app.schemas.chat import ChatCompletionRequest, ChatMessage
+    from app.providers.registry import ProviderRegistry
+
+    registry = ProviderRegistry()
+    mock_groq = MagicMock()
+    mock_groq.name = "groq"
+    mock_groq.health_check = AsyncMock(return_value=True)
+    mock_groq.list_models = AsyncMock(return_value=["llama-3.3-70b-versatile"])
+    registry.register(mock_groq)
+
+    catalog = ModelMetadataCatalog()
+    catalog._catalog["groq:llama-3.3-70b-versatile"] = ModelMetadata(
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        cost_per_1k_tokens=0.01,
+        input_cost_per_1k=0.01,
+        output_cost_per_1k=0.01,
+        capabilities=["text"],
+        context_window=128000,
+        baseline_latency_ms=150.0,
+    )
+    calc = CostCalculator(catalog)
+
+    # Remaining budget is 0.0, expensive groq costs > 0
+    mock_budget = _make_budget(
+        team_id="team-broke",
+        limit_amount=1.0,
+        current_usage=1.0,
+        reserved=0.0,
+        policy="DOWNGRADE",
+    )
+    mock_budget.remaining_amount = 0.0
+
+    mock_budget_service = AsyncMock(spec=BudgetService)
+    mock_budget_service.get_budget = AsyncMock(return_value=mock_budget)
+
+    service = ChatService(registry=registry)
+    context = _make_context(team_id="team-broke")
+
+    request = ChatCompletionRequest(
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        messages=[ChatMessage(role="user", content="Expensive prompt" * 100)],
+        max_tokens=500,
+    )
+
+    with pytest.raises(BudgetExceeded) as exc_info:
+        await service.complete(
+            request=request,
+            request_id="req-fail",
+            context=context,
+            budget_service=mock_budget_service,
+            cost_calculator=calc,
+        )
+
+    assert exc_info.value.team_id == "team-broke"
+    assert exc_info.value.status_code == 402
+    assert exc_info.value.code == "BUDGET_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_budget_downgrade_ollama_always_affordable():
+    """Ollama (zero cost) is selected as the always-affordable fallback candidate."""
+    from app.services.chat_service import ChatService
+    from app.schemas.chat import (
+        ChatCompletionChoice,
+        ChatCompletionRequest,
+        ChatCompletionResponse,
+        ChatMessage,
+        ChatMessageResponse,
+        ResponseMetadata,
+        UsageMetadata,
+    )
+    from app.providers.registry import ProviderRegistry
+
+    registry = ProviderRegistry()
+
+    # Expensive provider
+    mock_gemini = MagicMock()
+    mock_gemini.name = "gemini"
+    mock_gemini.health_check = AsyncMock(return_value=True)
+    mock_gemini.list_models = AsyncMock(return_value=["gemini-1.5-pro"])
+    registry.register(mock_gemini)
+
+    # Local Ollama provider
+    mock_ollama = MagicMock()
+    mock_ollama.name = "ollama"
+    mock_ollama.health_check = AsyncMock(return_value=True)
+    mock_ollama.list_models = AsyncMock(return_value=["llama3.2"])
+    mock_ollama.chat = AsyncMock(
+        return_value=ChatCompletionResponse(
+            provider="ollama",
+            model="llama3.2",
+            choices=[ChatCompletionChoice(index=0, message=ChatMessageResponse(content="Ollama response"), finish_reason="stop")],
+            usage=UsageMetadata(prompt_tokens=50, completion_tokens=20, total_tokens=70),
+            metadata=ResponseMetadata(request_id="req-ollama", latency_ms=50.0, selected_provider="ollama", selected_model="llama3.2"),
+        )
+    )
+    registry.register(mock_ollama)
+
+    catalog = ModelMetadataCatalog()
+    catalog._catalog["gemini:gemini-1.5-pro"] = ModelMetadata(
+        provider="gemini",
+        model="gemini-1.5-pro",
+        cost_per_1k_tokens=0.005,
+        input_cost_per_1k=0.005,
+        output_cost_per_1k=0.015,
+        capabilities=["text"],
+        context_window=128000,
+        baseline_latency_ms=200.0,
+    )
+    catalog._catalog["ollama:llama3.2"] = ModelMetadata(
+        provider="ollama",
+        model="llama3.2",
+        cost_per_1k_tokens=0.0,
+        input_cost_per_1k=0.0,
+        output_cost_per_1k=0.0,
+        capabilities=["text"],
+        context_window=8192,
+        baseline_latency_ms=100.0,
+    )
+    calc = CostCalculator(catalog)
+
+    mock_budget = _make_budget(
+        team_id="team-ollama-fallback",
+        limit_amount=1.0,
+        current_usage=0.99999,
+        reserved=0.0,
+        policy="DOWNGRADE",
+    )
+    mock_budget.remaining_amount = 0.00001
+
+    mock_budget_service = AsyncMock(spec=BudgetService)
+    mock_budget_service.get_budget = AsyncMock(return_value=mock_budget)
+    mock_budget_service.check_and_reserve = AsyncMock(return_value=(mock_budget, False))
+    mock_budget_service.reconcile = AsyncMock(return_value=mock_budget)
+
+    service = ChatService(registry=registry)
+    context = _make_context(team_id="team-ollama-fallback")
+
+    request = ChatCompletionRequest(
+        provider="gemini",
+        model="gemini-1.5-pro",
+        messages=[ChatMessage(role="user", content="Prompt for gemini" * 50)],
+        max_tokens=200,
+    )
+
+    response = await service.complete(
+        request=request,
+        request_id="req-ollama",
+        context=context,
+        budget_service=mock_budget_service,
+        cost_calculator=calc,
+    )
+
+    assert response.metadata.budget_downgraded is True
+    assert response.provider == "ollama"
+    assert response.model == "llama3.2"
+    mock_ollama.chat.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_service_budget_downgrade_respects_required_capabilities():
+    """Downgrade filters candidates to only those matching required capabilities."""
+    from app.services.chat_service import ChatService
+    from app.schemas.chat import (
+        ChatCompletionChoice,
+        ChatCompletionRequest,
+        ChatCompletionResponse,
+        ChatMessage,
+        ChatMessageResponse,
+        ResponseMetadata,
+        UsageMetadata,
+    )
+    from app.providers.registry import ProviderRegistry
+
+    registry = ProviderRegistry()
+
+    # Expensive candidate (code, text)
+    mock_groq = MagicMock()
+    mock_groq.name = "groq"
+    mock_groq.health_check = AsyncMock(return_value=True)
+    mock_groq.list_models = AsyncMock(return_value=["llama-3.3-70b-versatile"])
+    registry.register(mock_groq)
+
+    # Cheap candidate WITHOUT code capability
+    mock_cheap_no_code = MagicMock()
+    mock_cheap_no_code.name = "gemini"
+    mock_cheap_no_code.health_check = AsyncMock(return_value=True)
+    mock_cheap_no_code.list_models = AsyncMock(return_value=["gemini-flash-textonly"])
+    registry.register(mock_cheap_no_code)
+
+    # Cheap candidate WITH code capability
+    mock_cheap_with_code = MagicMock()
+    mock_cheap_with_code.name = "ollama"
+    mock_cheap_with_code.health_check = AsyncMock(return_value=True)
+    mock_cheap_with_code.list_models = AsyncMock(return_value=["qwen2.5-coder"])
+    mock_cheap_with_code.chat = AsyncMock(
+        return_value=ChatCompletionResponse(
+            provider="ollama",
+            model="qwen2.5-coder",
+            choices=[ChatCompletionChoice(index=0, message=ChatMessageResponse(content="Code response"), finish_reason="stop")],
+            usage=UsageMetadata(prompt_tokens=50, completion_tokens=20, total_tokens=70),
+            metadata=ResponseMetadata(request_id="req-code", latency_ms=50.0, selected_provider="ollama", selected_model="qwen2.5-coder"),
+        )
+    )
+    registry.register(mock_cheap_with_code)
+
+    catalog = ModelMetadataCatalog()
+    catalog._catalog["groq:llama-3.3-70b-versatile"] = ModelMetadata(
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        cost_per_1k_tokens=0.01,
+        input_cost_per_1k=0.01,
+        output_cost_per_1k=0.01,
+        capabilities=["text", "code"],
+        context_window=128000,
+        baseline_latency_ms=150.0,
+    )
+    catalog._catalog["gemini:gemini-flash-textonly"] = ModelMetadata(
+        provider="gemini",
+        model="gemini-flash-textonly",
+        cost_per_1k_tokens=0.00001,
+        input_cost_per_1k=0.00001,
+        output_cost_per_1k=0.00001,
+        capabilities=["text"],  # lacks "code"
+        context_window=128000,
+        baseline_latency_ms=80.0,
+    )
+    catalog._catalog["ollama:qwen2.5-coder"] = ModelMetadata(
+        provider="ollama",
+        model="qwen2.5-coder",
+        cost_per_1k_tokens=0.00005,
+        input_cost_per_1k=0.00005,
+        output_cost_per_1k=0.00005,
+        capabilities=["text", "code"],  # has "code"
+        context_window=32768,
+        baseline_latency_ms=90.0,
+    )
+    calc = CostCalculator(catalog)
+
+    mock_budget = _make_budget(
+        team_id="team-code",
+        limit_amount=1.0,
+        current_usage=0.999,
+        reserved=0.0,
+        policy="DOWNGRADE",
+    )
+    mock_budget.remaining_amount = 0.001
+
+    mock_budget_service = AsyncMock(spec=BudgetService)
+    mock_budget_service.get_budget = AsyncMock(return_value=mock_budget)
+    mock_budget_service.check_and_reserve = AsyncMock(return_value=(mock_budget, False))
+    mock_budget_service.reconcile = AsyncMock(return_value=mock_budget)
+
+    service = ChatService(registry=registry)
+    context = _make_context(team_id="team-code")
+
+    request = ChatCompletionRequest(
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        messages=[ChatMessage(role="user", content="Write a python function")],
+        required_capabilities=["code"],
+        max_tokens=200,
+    )
+
+    response = await service.complete(
+        request=request,
+        request_id="req-code",
+        context=context,
+        budget_service=mock_budget_service,
+        cost_calculator=calc,
+    )
+
+    assert response.metadata.budget_downgraded is True
+    # Should select ollama:qwen2.5-coder, NOT gemini-flash-textonly
+    assert response.provider == "ollama"
+    assert response.model == "qwen2.5-coder"
+    mock_cheap_with_code.chat.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_service_budget_downgrade_not_triggered_if_original_fits():
+    """If original candidate fits within budget, no downgrade occurs."""
+    from app.services.chat_service import ChatService
+    from app.schemas.chat import (
+        ChatCompletionChoice,
+        ChatCompletionRequest,
+        ChatCompletionResponse,
+        ChatMessage,
+        ChatMessageResponse,
+        ResponseMetadata,
+        UsageMetadata,
+    )
+    from app.providers.registry import ProviderRegistry
+
+    registry = ProviderRegistry()
+    mock_groq = MagicMock()
+    mock_groq.name = "groq"
+    mock_groq.health_check = AsyncMock(return_value=True)
+    mock_groq.list_models = AsyncMock(return_value=["llama-3.3-70b-versatile"])
+    mock_groq.chat = AsyncMock(
+        return_value=ChatCompletionResponse(
+            provider="groq",
+            model="llama-3.3-70b-versatile",
+            choices=[ChatCompletionChoice(index=0, message=ChatMessageResponse(content="Groq response"), finish_reason="stop")],
+            usage=UsageMetadata(prompt_tokens=10, completion_tokens=10, total_tokens=20),
+            metadata=ResponseMetadata(request_id="req-ok", latency_ms=100.0, selected_provider="groq", selected_model="llama-3.3-70b-versatile"),
+        )
+    )
+    registry.register(mock_groq)
+
+    catalog = ModelMetadataCatalog()
+    catalog._catalog["groq:llama-3.3-70b-versatile"] = ModelMetadata(
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        cost_per_1k_tokens=0.001,
+        input_cost_per_1k=0.001,
+        output_cost_per_1k=0.001,
+        capabilities=["text"],
+        context_window=128000,
+        baseline_latency_ms=150.0,
+    )
+    calc = CostCalculator(catalog)
+
+    # Plenty of budget remaining
+    mock_budget = _make_budget(
+        team_id="team-rich",
+        limit_amount=100.0,
+        current_usage=1.0,
+        reserved=0.0,
+        policy="DOWNGRADE",
+    )
+    mock_budget.remaining_amount = 99.0
+
+    mock_budget_service = AsyncMock(spec=BudgetService)
+    mock_budget_service.get_budget = AsyncMock(return_value=mock_budget)
+    mock_budget_service.check_and_reserve = AsyncMock(return_value=(mock_budget, False))
+    mock_budget_service.reconcile = AsyncMock(return_value=mock_budget)
+
+    service = ChatService(registry=registry)
+    context = _make_context(team_id="team-rich")
+
+    request = ChatCompletionRequest(
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        messages=[ChatMessage(role="user", content="Short prompt")],
+        max_tokens=50,
+    )
+
+    response = await service.complete(
+        request=request,
+        request_id="req-ok",
+        context=context,
+        budget_service=mock_budget_service,
+        cost_calculator=calc,
+    )
+
+    assert response.metadata.budget_downgraded is False
+    assert response.provider == "groq"
+    assert response.model == "llama-3.3-70b-versatile"
+    mock_groq.chat.assert_called_once()
+
+

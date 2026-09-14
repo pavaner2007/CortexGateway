@@ -86,18 +86,20 @@ class ChatService:
         budget_service: object = None,
         cost_calculator: object = None,
         settings: object = None,
+        team_rate_limit_service: object = None,
     ) -> ChatCompletionResponse:
         """
         Execute a chat completion with rate limiting and budget management.
 
         Args:
-            request:          Validated Cortex chat completion request.
-            request_id:       Current request ID from middleware.
-            context:          Authenticated RequestContext (Phase 5).
-            rate_limiter:     RateLimiter instance (Phase 6). None = disabled.
-            budget_service:   BudgetService instance (Phase 6). None = disabled.
-            cost_calculator:  CostCalculator instance (Phase 6). None = disabled.
-            settings:         Settings instance for Phase 6 config flags.
+            request:                 Validated Cortex chat completion request.
+            request_id:              Current request ID from middleware.
+            context:                 Authenticated RequestContext (Phase 5).
+            rate_limiter:            RateLimiter instance (Phase 6). None = disabled.
+            budget_service:          BudgetService instance (Phase 6). None = disabled.
+            team_rate_limit_service: TeamRateLimitService instance for per-team limits. None = disabled.
+            cost_calculator:         CostCalculator instance (Phase 6). None = disabled.
+            settings:                Settings instance for Phase 6 config flags.
 
         Returns:
             Normalized ChatCompletionResponse with Phase 6 metadata.
@@ -113,14 +115,27 @@ class ChatService:
             from app.budget.exceptions import RateLimitExceeded
             from app.rate_limit.limiter import RateLimiter
 
+            # Resolve effective team limits: per-team DB override → global default
+            team_rpm = s.rate_limit_team_requests
+            team_window = s.rate_limit_team_window_seconds
+
+            if team_rate_limit_service is not None and context.team_id:
+                try:
+                    team_override = await team_rate_limit_service.get(context.team_id)
+                    if team_override is not None and team_override.requests_per_minute is not None:
+                        team_rpm = team_override.requests_per_minute
+                except Exception:
+                    # Fail-open: DB unavailable → use global default
+                    pass
+
             outcome = await rate_limiter.check_all(
                 api_key_id=context.api_key_id,
                 team_id=context.team_id,
                 org_id=context.organization_id,
                 key_limit=s.rate_limit_api_key_requests,
                 key_window=s.rate_limit_api_key_window_seconds,
-                team_limit=s.rate_limit_team_requests,
-                team_window=s.rate_limit_team_window_seconds,
+                team_limit=team_rpm,
+                team_window=team_window,
                 org_limit=s.rate_limit_org_requests,
                 org_window=s.rate_limit_org_window_seconds,
             )

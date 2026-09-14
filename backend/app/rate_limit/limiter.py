@@ -1,25 +1,35 @@
 """
-Cortex Gateway — Redis Rate Limiter (Phase 6).
+Cortex Gateway — Redis Rate Limiter (Phase 6 / Gap 3 fix).
 
-Implements a fixed-window counter rate limiter using an atomic Lua script.
+Implements a **sliding-window counter** rate limiter using an atomic Lua script.
+
+Algorithm (sliding window counter):
+    Two adjacent fixed-window counters are kept in Redis (current + previous).
+    The effective request count is a weighted sum:
+
+        effective = prev_count × (1 - elapsed_fraction) + curr_count
+
+    where elapsed_fraction = (now - current_window_start) / window_seconds.
+
+    This smooths the boundary burst: even if a client fires N requests at the
+    tail of the previous window, they count proportionally in the next window.
+    Unlike a pure fixed-window counter, the maximum burst is limited to
+    ≈ limit × (1 + fraction_of_previous_window_remaining), which approaches
+    `limit` as the window rolls over — not 2× limit.
 
 Atomicity guarantee:
     A single Lua script is executed on the Redis server in one round-trip.
-    The INCR and EXPIREAT operations are serialized by Redis, eliminating
-    the read-then-write race condition of naive GET → Python increment → SET.
+    Both the INCR and the two GET operations are serialized by Redis,
+    eliminating all read-then-write race conditions.
 
 Redis key format:
     ratelimit:<scope>:<identifier>:<window_start>
 
     scope       : 'key' | 'team' | 'org'
     identifier  : api_key_id | team_id | organization_id
-    window_start: Unix timestamp of the start of the current window
+    window_start: Unix timestamp of the start of the current fixed window
 
-Window start calculation:
-    window_start = floor(now / window_seconds) * window_seconds
-
-This means all windows are aligned to epoch multiples of window_seconds,
-making window resets predictable and deterministic across multiple workers.
+    The *previous* window key uses window_start - window_seconds.
 """
 
 from __future__ import annotations
@@ -33,27 +43,60 @@ from redis.asyncio import Redis
 from app.core.logging import logger
 from app.rate_limit.models import RateLimitOutcome, RateLimitResult
 
-# Lua script: atomically increment counter, set expiry on first increment,
-# and return (count, ttl).
-# KEYS[1]: Redis key
-# ARGV[1]: limit (int)
-# ARGV[2]: window_seconds (int)
+# Sliding-window counter Lua script.
+# Atomically:
+#   1. INCR the current-window counter.
+#   2. Set expiry on first hit to 2× window (keeps prev window data alive).
+#   3. GET the previous-window counter.
+#   4. Compute the weighted effective count.
+#   5. Return (effective_count_int, ttl, current_count).
+#
+# KEYS[1]: current window key  (ratelimit:<scope>:<id>:<curr_window_start>)
+# KEYS[2]: previous window key (ratelimit:<scope>:<id>:<curr_window_start - window>)
+# ARGV[1]: limit            (int)
+# ARGV[2]: window_seconds   (int)
+# ARGV[3]: elapsed_ms       (int, milliseconds elapsed since current window started)
+#
+# Returns: {effective_count (int, ceiling), ttl_seconds, current_count}
 _LUA_SCRIPT = """
-local key = KEYS[1]
-local limit = tonumber(ARGV[1])
-local window = tonumber(ARGV[2])
-local count = redis.call('INCR', key)
-if count == 1 then
-    redis.call('EXPIRE', key, window)
+local curr_key  = KEYS[1]
+local prev_key  = KEYS[2]
+local limit     = tonumber(ARGV[1])
+local window    = tonumber(ARGV[2])
+local elapsed   = tonumber(ARGV[3]) / 1000.0   -- convert ms → seconds
+
+-- Increment current window
+local curr_count = redis.call('INCR', curr_key)
+if curr_count == 1 then
+    -- Keep key alive for 2 windows so prev window data survives into next window
+    redis.call('EXPIRE', curr_key, window * 2)
 end
-local ttl = redis.call('TTL', key)
-return {count, ttl}
+
+-- Read previous window count (0 if expired / doesn't exist)
+local prev_count = tonumber(redis.call('GET', prev_key) or '0')
+
+-- Sliding-window effective count
+-- Weight previous window by fraction of window NOT yet elapsed
+local fraction = elapsed / window           -- 0.0 at window start, 1.0 at end
+local effective = prev_count * (1.0 - fraction) + curr_count
+
+-- Ceiling to integer for comparison
+local effective_int = math.ceil(effective)
+
+local ttl = redis.call('TTL', curr_key)
+if ttl < 0 then ttl = window end
+
+return {effective_int, ttl, curr_count}
 """
+
 
 
 class RateLimiter:
     """
-    Redis-backed fixed-window rate limiter.
+    Redis-backed **sliding-window counter** rate limiter.
+
+    Uses two adjacent fixed-window counters weighted by elapsed time fraction
+    to prevent the 2× burst-at-boundary issue of plain fixed-window counters.
 
     Usage:
         limiter = RateLimiter(redis=redis_client)
@@ -110,14 +153,22 @@ class RateLimiter:
                 retry_after_seconds=0,
             )
 
-        now = int(time.time())
+        now_float = time.time()
+        now = int(now_float)
         window_start = (now // window_seconds) * window_seconds
-        redis_key = f"ratelimit:{scope}:{identifier}:{window_start}"
+        prev_window_start = window_start - window_seconds
+        curr_key = f"ratelimit:{scope}:{identifier}:{window_start}"
+        prev_key = f"ratelimit:{scope}:{identifier}:{prev_window_start}"
+        # Milliseconds elapsed since current window started (for weighted calculation)
+        elapsed_ms = int((now_float - window_start) * 1000)
 
         try:
             script = await self._get_script()
-            result = await script(keys=[redis_key], args=[limit, window_seconds])
-            count = int(result[0])
+            result = await script(
+                keys=[curr_key, prev_key],
+                args=[limit, window_seconds, elapsed_ms],
+            )
+            count = int(result[0])   # effective sliding-window count (ceiling)
             ttl = int(result[1]) if result[1] > 0 else window_seconds
         except Exception as exc:
             # Fail-open: Redis error → allow request, log the error

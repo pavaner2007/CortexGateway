@@ -125,16 +125,17 @@ Your Application
 - **Context propagation** — `RequestContext` (org_id, team_id, key_id, role) flows through every request via ContextVar
 - **Alembic migrations** — `organizations`, `teams`, `api_keys` tables with FK cascade
 
-### Phase 6 — Rate Limiting & Budget Management ✅
-- **Fixed-Window Rate Limiting** — Redis-backed Lua-atomic counters at three independent scopes: API key, team, organization
-- **Atomic Lua Scripts** — single round-trip INCR + EXPIREAT with race-free enforcement; no process-local counters
-- **Fail-Open Rate Limiter** — Redis unavailability allows traffic to pass (logged as warning, not a hard failure)
+### Rate Limiting & Budget Management ✅
+- **Sliding-Window Rate Limiting** — Redis-backed Lua-atomic counters at three independent scopes: API key, team, organization; weighted two-window algorithm eliminates the fixed-window 2× boundary burst
+- **Per-Team Rate Limit Overrides** — `POST/GET/DELETE /api/v1/teams/{team_id}/rate-limits` (admin only); per-team rpm/rph overrides stored in DB, fall back to global defaults when unset; DB failure fails open
+- **Atomic Lua Scripts** — single round-trip sliding-window computation (current + previous window weighted by elapsed fraction); race-free enforcement; no process-local counters
+- **Fail-Open Rate Limiter** — Redis or DB unavailability allows traffic to pass (logged as warning, never a hard failure)
 - **429 with Retry-After** — rate-limited responses carry `Retry-After` header indicating exact window reset time
 - **Team-Level Budgets** — spending limits with configurable period (daily / weekly / monthly)
 - **Three Enforcement Policies**:
   - `BLOCK` — reject request with HTTP 402 when budget would be exceeded
   - `WARN` — allow request but emit structured warning log when threshold crossed
-  - `DOWNGRADE` — automatically route to cheapest compatible provider/model within budget using Phase 3 scorer
+  - `DOWNGRADE` — automatically route to cheapest compatible provider/model within budget using the routing scorer; capability requirements respected during downgrade; falls back to zero-cost local providers (Ollama) when available; raises 402 if no affordable candidate exists
 - **Atomic Budget Reservation** — PostgreSQL `SELECT FOR UPDATE` prevents concurrent overspend; `reserved` column tracks in-flight amounts
 - **Lazy Period Rollover** — budget resets on first access after period_end; handled inside the DB lock (no scheduler needed)
 - **Split Input/Output Pricing** — `ModelMetadata` extended with `input_cost_per_1k` and `output_cost_per_1k` for accurate per-request cost accounting
@@ -142,7 +143,7 @@ Your Application
 - **Budget Reconciliation** — reservation released + actual cost charged after every request; reservation released without charge on provider failure
 - **Budget Management API** — `POST/GET/PATCH/DELETE /api/v1/teams/{team_id}/budget` (admin only)
 - **Cost & Budget Metadata** — response carries `estimated_cost`, `actual_cost`, `remaining_budget` (optional), `budget_warning`, `budget_downgraded`, `rate_limit_remaining`
-- **238 automated tests** — 100% passing across all 6 phases; zero real API credits required
+- **256 automated tests** — 100% passing; zero real API credits required
 
 ---
 
@@ -223,7 +224,7 @@ pytest tests/ -v
 ```
 
 ```
-238 passed in 4.41s
+256 passed in 4.09s
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -309,19 +310,21 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 
 > **Security:** Set `CORTEX_BOOTSTRAP_ENABLED=false` permanently after initial setup. The bootstrap endpoint self-disables once an organization exists regardless of this flag.
 
-### Rate Limiting Configuration (Phase 6)
+### Rate Limiting Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RATE_LIMIT_ENABLED` | `true` | Enable Redis-backed rate limiting globally |
-| `RATE_LIMIT_API_KEY_REQUESTS` | `100` | Max requests per API key per window |
+| `RATE_LIMIT_API_KEY_REQUESTS` | `100` | Global max requests per API key per 60s window |
 | `RATE_LIMIT_API_KEY_WINDOW_SECONDS` | `60` | API key window duration in seconds |
-| `RATE_LIMIT_TEAM_REQUESTS` | `500` | Max requests per team per window |
+| `RATE_LIMIT_TEAM_REQUESTS` | `500` | Global max requests per team per 60s window (overridable per-team via API) |
 | `RATE_LIMIT_TEAM_WINDOW_SECONDS` | `60` | Team window duration in seconds |
 | `RATE_LIMIT_ORG_REQUESTS` | `2000` | Max requests per organization per window |
 | `RATE_LIMIT_ORG_WINDOW_SECONDS` | `60` | Org window duration in seconds |
 
-### Budget Configuration (Phase 6)
+> **Per-team overrides:** Use `POST /api/v1/teams/{team_id}/rate-limits` to give individual teams different limits. The global env vars above serve as the default for teams without a configured override.
+
+### Budget Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -450,7 +453,7 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
   }'
 ```
 
-**Normalized response (identical shape for all providers, with Phase 6 cost/budget metadata):**
+**Normalized response (identical shape for all providers, including cost and budget metadata):**
 ```json
 {
   "id": "ctx_abc123def456",
@@ -514,7 +517,7 @@ curl -X POST http://localhost:8000/api/v1/teams/{team_id}/budget \
 |--------|----------|
 | `BLOCK` | Reject with HTTP 402 when budget would be exceeded |
 | `WARN` | Allow request; emit structured warning log when threshold crossed |
-| `DOWNGRADE` | Automatically route to cheapest compatible provider within remaining budget |
+| `DOWNGRADE` | Re-route to cheapest compatible provider/model within remaining budget; capability constraints respected; Ollama (zero-cost) preferred as fallback; raises 402 if no affordable candidate exists |
 
 ### Get Team Budget
 
@@ -556,6 +559,52 @@ curl -X PATCH http://localhost:8000/api/v1/teams/{team_id}/budget \
 curl -X DELETE http://localhost:8000/api/v1/teams/{team_id}/budget \
   -H "Authorization: Bearer cxg_admin_key"
 # Returns 204 No Content
+```
+
+---
+
+## Per-Team Rate Limit Management API
+
+All rate limit endpoints require an **admin** API key. Per-team limits override the global defaults for that team only; all other teams continue using the global env var defaults.
+
+### View Effective Rate Limits
+
+```bash
+curl http://localhost:8000/api/v1/teams/{team_id}/rate-limits \
+  -H "Authorization: Bearer cxg_admin_key"
+```
+
+```json
+{
+  "team_id": "team-uuid",
+  "effective_requests_per_minute": 200,
+  "effective_requests_per_hour": 3000,
+  "override_requests_per_minute": 200,
+  "override_requests_per_hour": 3000,
+  "global_requests_per_minute": 500,
+  "global_requests_per_hour": null
+}
+```
+
+### Set Per-Team Rate Limits
+
+```bash
+curl -X POST http://localhost:8000/api/v1/teams/{team_id}/rate-limits \
+  -H "Authorization: Bearer cxg_admin_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requests_per_minute": 200,
+    "requests_per_hour": 3000
+  }'
+# Pass null for a field to revert it to the global default
+```
+
+### Remove Team Rate Limit Overrides
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/teams/{team_id}/rate-limits \
+  -H "Authorization: Bearer cxg_admin_key"
+# Returns 204 — team reverts to global defaults
 ```
 
 ---
@@ -611,7 +660,7 @@ Full API docs → http://localhost:8000/docs
 
 ---
 
-## Request Pipeline (Phase 6)
+## Request Pipeline
 
 Every authenticated request passes through this ordered pipeline:
 
@@ -635,12 +684,12 @@ POST /api/v1/chat/completions
            │                    selected (DOWNGRADE)
         ▼
 ┌──────────────────────────┐
-│  4. Routing Engine       │  Phase 3: score candidates, apply policy weights
+│  4. Routing Engine       │  Multi-factor scoring across health, latency, cost
 └──────────┬───────────────┘
            │
         ▼
 ┌──────────────────────────┐
-│  5. Reliability Executor │  Phase 4: retries + circuit breaker + failover
+│  5. Reliability Executor │  Retries + circuit breaker + automated failover
 └──────────┬───────────────┘
            │
         ▼
@@ -674,34 +723,37 @@ CortexGateway/
 │   │   ├── env.py                     # Async migration runner
 │   │   ├── script.py.mako             # Migration file template
 │   │   └── versions/
-│   │       ├── 0001_phase5_auth.py    # organizations, teams, api_keys tables
-│   │       └── 0002_phase6_budgets.py # budgets table with reserved column
+│   │       ├── 0001_phase5_auth.py             # organizations, teams, api_keys tables
+│   │       ├── 0002_phase6_budgets.py          # budgets table with reserved column
+│   │       └── 0003_phase6_team_rate_limits.py # per-team rate limit overrides table
 │   ├── alembic.ini                    # Alembic config
 │   ├── app/
 │   │   ├── api/v1/endpoints/
 │   │   │   ├── health.py              # GET /, /version, /health
-│   │   │   ├── chat.py                # POST /api/v1/chat/completions (Phase 2–6)
+│   │   │   ├── chat.py                # POST /api/v1/chat/completions
 │   │   │   ├── providers.py           # GET /api/v1/providers/*
-│   │   │   ├── bootstrap.py           # POST /api/v1/bootstrap (Phase 5)
-│   │   │   ├── organizations.py       # Org CRUD (Phase 5)
-│   │   │   ├── teams.py               # Team CRUD (Phase 5)
-│   │   │   ├── api_keys.py            # Key lifecycle (Phase 5)
-│   │   │   └── budget.py              # Budget CRUD (Phase 6, admin only)
-│   │   ├── auth/                      # Phase 5 — Auth & Multi-Tenancy
+│   │   │   ├── bootstrap.py           # POST /api/v1/bootstrap
+│   │   │   ├── organizations.py       # Org CRUD (admin only)
+│   │   │   ├── teams.py               # Team CRUD (admin only)
+│   │   │   ├── api_keys.py            # Key lifecycle (admin only)
+│   │   │   ├── budget.py              # Budget CRUD (admin only)
+│   │   │   └── rate_limits.py         # Per-team rate limit overrides (admin only)
+│   │   ├── auth/                      # Auth & Multi-Tenancy
 │   │   │   ├── dependencies.py        # get_request_context, require_admin
 │   │   │   ├── exceptions.py          # AuthenticationError, AuthorizationError
 │   │   │   ├── models.py              # Organization, Team, APIKey ORM
 │   │   │   ├── schemas.py             # Pydantic schemas + RequestContext ContextVar
 │   │   │   ├── security.py            # CSPRNG keygen, HMAC-SHA256, compare_digest
 │   │   │   └── service.py             # AuthService DB operations
-│   │   ├── budget/                    # Phase 6 — Budget Management
+│   │   ├── budget/                    # Budget Management
 │   │   │   ├── cost.py                # CostCalculator (estimate + actual)
 │   │   │   ├── exceptions.py          # RateLimitExceeded (429), BudgetExceeded (402)
 │   │   │   ├── models.py              # Budget ORM with reserved column
 │   │   │   ├── schemas.py             # Pydantic CRUD schemas
 │   │   │   └── service.py             # BudgetService (SELECT FOR UPDATE atomicity)
-│   │   ├── rate_limit/                # Phase 6 — Rate Limiting
-│   │   │   ├── limiter.py             # RateLimiter (Lua atomic fixed-window)
+│   │   ├── rate_limit/                # Rate Limiting
+│   │   │   ├── limiter.py             # RateLimiter (sliding-window Lua atomic script)
+│   │   │   ├── team_limits.py         # TeamRateLimit ORM + TeamRateLimitService
 │   │   │   └── models.py              # RateLimitResult, RateLimitOutcome
 │   │   ├── config/
 │   │   │   └── settings.py            # Pydantic Settings v2 (all phases)
@@ -738,25 +790,26 @@ CortexGateway/
 │   │   │   └── models.py              # ReliabilityContext, AttemptRecord
 │   │   ├── schemas/
 │   │   │   ├── responses.py           # Shared Pydantic v2 response models
-│   │   │   └── chat.py                # Chat request/response + Phase 6 cost metadata
+│   │   │   └── chat.py                # Chat request/response + cost/budget metadata
 │   │   ├── services/
-│   │   │   └── chat_service.py        # ChatService — full Phase 1–6 pipeline
+│   │   │   └── chat_service.py        # ChatService — full request pipeline
 │   │   ├── utils/
 │   │   │   └── redis_client.py        # Async Redis client
 │   │   ├── exceptions.py              # Global exception handlers (incl. 402, 429)
 │   │   └── main.py                    # FastAPI app + lifespan
 │   ├── tests/
-│   │   ├── conftest.py                # Fixtures (DB/Redis mocked)
-│   │   ├── test_endpoints.py          # Phase 1 endpoint tests
-│   │   ├── test_providers.py          # Phase 2 provider unit tests
-│   │   ├── test_chat_api.py           # Phase 2–6 API integration tests
-│   │   ├── test_routing.py            # Phase 3 routing engine tests
-│   │   ├── test_reliability.py        # Phase 4 reliability tests
-│   │   ├── test_auth_security.py      # Phase 5 security unit tests
-│   │   ├── test_auth_lifecycle.py     # Phase 5 lifecycle + RBAC tests
-│   │   ├── test_auth_security_leakage.py  # Phase 5 leakage tests
-│   │   ├── test_rate_limiting.py      # Phase 6 rate limiting tests
-│   │   └── test_budget.py             # Phase 6 budget + cost tests
+│   │   ├── conftest.py                    # Fixtures (DB/Redis mocked)
+│   │   ├── test_endpoints.py              # Infrastructure endpoint tests
+│   │   ├── test_providers.py              # Provider adapter unit tests
+│   │   ├── test_chat_api.py               # Unified API integration tests
+│   │   ├── test_routing.py                # Routing engine unit tests
+│   │   ├── test_reliability.py            # Reliability executor tests
+│   │   ├── test_auth_security.py          # Auth security unit tests
+│   │   ├── test_auth_lifecycle.py         # Auth lifecycle + RBAC tests
+│   │   ├── test_auth_security_leakage.py  # Leakage / isolation tests
+│   │   ├── test_rate_limiting.py          # Sliding-window limiter tests (incl. boundary burst regression)
+│   │   ├── test_budget.py                 # Budget + cost tests (incl. DOWNGRADE policy coverage)
+│   │   └── test_team_rate_limits.py       # Per-team rate limit override tests
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
