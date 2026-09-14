@@ -1,11 +1,14 @@
 """
 Cortex Gateway — Global Exception Handlers.
 
-Registers three handlers on the FastAPI application:
+Registers handlers on the FastAPI application:
 
 1. ``RequestValidationError``  →  422 Unprocessable Entity
 2. ``HTTPException``           →  Propagated status code
-3. ``Exception`` (catch-all)   →  500 Internal Server Error
+3. ``ProviderException``       →  Provider-specific HTTP status
+4. ``AuthenticationError``     →  401 Unauthorized
+5. ``AuthorizationError``      →  403 Forbidden
+6. ``Exception`` (catch-all)   →  500 Internal Server Error
 
 All responses share the ``{"error": {"code": ..., "message": ...,
 "request_id": ...}}`` envelope so clients always get a predictable shape.
@@ -21,6 +24,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.auth.exceptions import AuthenticationError, AuthorizationError
 from app.core.logging import logger
 from app.middleware.request_id import get_request_id
 from app.providers.exceptions import ProviderException
@@ -114,6 +118,41 @@ def register_exception_handlers(app: FastAPI) -> None:
             path=str(request.url.path),
             code=exc.code,
             message=exc.message,
+        )
+        return _error_response(
+            status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(AuthenticationError)
+    async def authentication_error_handler(
+        request: Request, exc: AuthenticationError
+    ) -> JSONResponse:
+        request_id = get_request_id()
+        # Generic log — never log Authorization header or key material
+        logger.warning(
+            "Authentication failed",
+            request_id=request_id,
+            path=str(request.url.path),
+        )
+        return _error_response(
+            status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(AuthorizationError)
+    async def authorization_error_handler(
+        request: Request, exc: AuthorizationError
+    ) -> JSONResponse:
+        request_id = get_request_id()
+        logger.warning(
+            "Authorization denied",
+            request_id=request_id,
+            path=str(request.url.path),
         )
         return _error_response(
             status_code=exc.status_code,

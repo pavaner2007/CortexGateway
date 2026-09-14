@@ -1,5 +1,5 @@
 """
-Cortex Gateway — Chat Completion Endpoint (Phase 2).
+Cortex Gateway — Chat Completion Endpoint (Phase 2 + Phase 5).
 
 Provides:
     POST /api/v1/chat/completions
@@ -7,11 +7,17 @@ Provides:
 Route handlers contain ZERO provider-specific logic.
 All provider routing, transformation, and normalization is handled by
 ChatService → ProviderRegistry → BaseLLMProvider.
+
+Phase 5: All requests now require a valid API key via
+    Authorization: Bearer <cxg_...>
+The RequestContext is extracted by get_request_context and passed to
+ChatService for ownership tracking and future rate limiting.
 """
 
 from fastapi import APIRouter, Depends, status
-from fastapi.responses import JSONResponse
 
+from app.auth.dependencies import get_request_context
+from app.auth.schemas import RequestContext
 from app.middleware.request_id import get_request_id
 from app.providers.registry import ProviderRegistry, get_registry
 from app.routing.router import RoutingEngine, get_routing_engine
@@ -37,12 +43,14 @@ def _get_chat_service(
     description=(
         "Send a chat completion request to any supported LLM provider "
         "through the unified Cortex Gateway interface. "
-        "The client explicitly selects the provider via the `provider` field."
+        "Requires a valid API key: Authorization: Bearer <cxg_...>."
     ),
     tags=["Chat"],
     responses={
         200: {"description": "Chat completion successful"},
         400: {"description": "Invalid request or model"},
+        401: {"description": "Authentication required"},
+        403: {"description": "Insufficient permissions"},
         404: {"description": "Provider not found"},
         429: {"description": "Provider rate limited"},
         502: {"description": "Provider error"},
@@ -52,6 +60,7 @@ def _get_chat_service(
 )
 async def chat_completions(
     request: ChatCompletionRequest,
+    context: RequestContext = Depends(get_request_context),
     service: ChatService = Depends(_get_chat_service),
 ) -> ChatCompletionResponse:
     """
@@ -59,6 +68,9 @@ async def chat_completions(
 
     Accepts a provider-agnostic request and returns a normalized response
     regardless of which LLM provider is selected.
+
+    The request context (organization_id, team_id, api_key_id, role) is
+    available to the chat service for logging and future rate limiting.
     """
     request_id = get_request_id()
-    return await service.complete(request, request_id)
+    return await service.complete(request, request_id, context=context)

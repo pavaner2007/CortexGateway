@@ -84,6 +84,22 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+async def get_db_dependency() -> AsyncGenerator[AsyncSession, None]:
+    """
+    FastAPI Depends-compatible database session dependency.
+
+    All auth endpoints and middleware that need a DB session MUST use this
+    function via ``Depends(get_db_dependency)``. Using a single shared
+    dependency allows tests to override it once via
+    ``app.dependency_overrides[get_db_dependency]`` instead of patching
+    per-endpoint local functions.
+
+    Wraps ``get_db_session()`` so the same commit/rollback semantics apply.
+    """
+    async with get_db_session() as session:
+        yield session
+
+
 async def check_db_health() -> str:
     """
     Perform a lightweight connectivity check (``SELECT 1``).

@@ -5,8 +5,11 @@ All configuration is loaded from environment variables and/or a .env file.
 DATABASE_URL and REDIS_URL are auto-constructed from component variables;
 callers should always use the computed properties, never raw component vars.
 
-Phase 2 adds provider API keys, enable flags, timeout, and routing defaults.
-Provider API keys are NEVER logged or returned to clients.
+Phase 2: provider API keys, enable flags, timeout, routing defaults.
+Phase 4: reliability timeouts, circuit breaker, retry config.
+Phase 5: API key pepper, bootstrap token.
+
+Provider API keys, peppers, and bootstrap tokens are NEVER logged or returned to clients.
 """
 
 from functools import lru_cache
@@ -108,6 +111,18 @@ class Settings(BaseSettings):
     circuit_breaker_cooldown_seconds: float = 30.0
     circuit_breaker_half_open_trials: int = 1
     reliability_max_failover_attempts: int = 2
+
+    # ── Authentication & Multi-Tenancy (Phase 5) ──────────────────────────────
+    # Server-side HMAC-SHA256 pepper for API key hashing.
+    # NEVER log, commit, or return this value.
+    api_key_pepper: str = "change-me-in-production"
+
+    # Bootstrap endpoint controls
+    # Set CORTEX_BOOTSTRAP_ENABLED=false after initial bootstrap to disable.
+    cortex_bootstrap_enabled: bool = True
+    # One-time secret for the bootstrap endpoint.
+    # NEVER log, commit, or return this value.
+    cortex_bootstrap_token: str = "change-me-in-production"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

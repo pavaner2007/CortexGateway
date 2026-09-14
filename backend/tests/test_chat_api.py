@@ -89,12 +89,26 @@ def _make_mock_registry(
     return reg
 
 
+from app.auth.dependencies import get_request_context
+from app.auth.schemas import RequestContext
 from app.providers.registry import get_registry
+
+# Test RequestContext injected for all chat tests (bypasses real auth)
+_TEST_CONTEXT = RequestContext(
+    organization_id="test-org-id",
+    team_id="test-team-id",
+    api_key_id="test-key-id",
+    role="admin",
+)
+
+
+def _mock_get_request_context() -> RequestContext:
+    return _TEST_CONTEXT
 
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    """Session-scoped test client with mocked infrastructure and providers."""
+    """Session-scoped test client with mocked infrastructure, providers, and auth."""
     mock_registry = _make_mock_registry()
     with (
         patch("app.main.init_db"),
@@ -103,7 +117,10 @@ def client() -> TestClient:
         patch("app.main.close_redis", new_callable=AsyncMock),
         patch("app.main._init_providers"),
     ):
+        # Override registry dependency
         app.dependency_overrides[get_registry] = lambda: mock_registry
+        # Override auth dependency so existing chat tests bypass real API-key auth
+        app.dependency_overrides[get_request_context] = _mock_get_request_context
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c
         app.dependency_overrides.clear()

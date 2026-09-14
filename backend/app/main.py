@@ -10,10 +10,8 @@ Configures:
 - API router registration
 - Swagger / ReDoc documentation
 
-Phase 2 additions:
-- Provider registry initialization in lifespan
-- Chat completion router (/api/v1/chat/completions)
-- Provider discovery router (/api/v1/providers)
+Phase 2: Provider registry + chat/provider routers
+Phase 5: Bootstrap, organizations, teams, API key routers
 """
 
 from contextlib import asynccontextmanager
@@ -22,9 +20,13 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.endpoints.api_keys import router as api_keys_router
+from app.api.v1.endpoints.bootstrap import router as bootstrap_router
 from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.health import router as system_router
+from app.api.v1.endpoints.organizations import router as organizations_router
 from app.api.v1.endpoints.providers import router as providers_router
+from app.api.v1.endpoints.teams import router as teams_router
 from app.config.settings import get_settings
 from app.core.logging import configure_logging, logger
 from app.database.session import close_db, init_db
@@ -168,9 +170,18 @@ def create_application() -> FastAPI:
     register_exception_handlers(application)
 
     # ── Routers ───────────────────────────────────────────────────────────────
+    # Public (no auth required)
     application.include_router(system_router)
+
+    # Phase 2 — provider + chat (chat now requires auth)
     application.include_router(chat_router, prefix="/api/v1")
     application.include_router(providers_router, prefix="/api/v1")
+
+    # Phase 5 — bootstrap + multi-tenancy management
+    application.include_router(bootstrap_router, prefix="/api/v1")
+    application.include_router(organizations_router, prefix="/api/v1")
+    application.include_router(teams_router, prefix="/api/v1")
+    application.include_router(api_keys_router, prefix="/api/v1")
 
     return application
 

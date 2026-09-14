@@ -1,5 +1,5 @@
 """
-Cortex Gateway — Chat Service (Phase 4).
+Cortex Gateway — Chat Service (Phase 4 + Phase 5).
 
 Orchestrates the chat completion flow:
     Chat API → ChatService → RoutingEngine → ReliabilityExecutor → ProviderRegistry → Provider Adapter
@@ -14,7 +14,10 @@ ChatService responsibilities:
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from app.auth.schemas import RequestContext
 
 from app.core.logging import logger
 from app.providers.registry import ProviderRegistry
@@ -55,6 +58,7 @@ class ChatService:
         self,
         request: ChatCompletionRequest,
         request_id: str,
+        context: Optional["RequestContext"] = None,
     ) -> ChatCompletionResponse:
         """
         Execute a chat completion using manual or intelligent routing with reliability.
@@ -62,6 +66,9 @@ class ChatService:
         Args:
             request:    Validated Cortex chat completion request.
             request_id: Current request ID from middleware.
+            context:    Optional authenticated RequestContext (Phase 5).
+                        Provides organization_id, team_id, api_key_id, role
+                        for logging and future Phase 6 rate limiting.
 
         Returns:
             Normalized ChatCompletionResponse.
@@ -109,6 +116,10 @@ class ChatService:
             target_provider=target_provider_name,
             target_model=target_model_name,
             message_count=len(request.messages),
+            # Phase 5: ownership context for tracing and future rate limiting
+            org_id=context.organization_id if context else None,
+            team_id=context.team_id if context else None,
+            key_id=context.api_key_id if context else None,
         )
 
         # Delegate execution to ReliabilityExecutor
