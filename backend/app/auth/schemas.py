@@ -23,9 +23,6 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-# ── Request Context ───────────────────────────────────────────────────────────
-
-
 @dataclass
 class RequestContext:
     """
@@ -45,13 +42,12 @@ class RequestContext:
     role: str  # "admin" | "member"
 
 
-# ── Organization Schemas ──────────────────────────────────────────────────────
-
-
 class OrganizationCreate(BaseModel):
     """Request body for creating an organization."""
 
-    name: str = Field(..., min_length=1, max_length=255, description="Organization display name.")
+    name: str = Field(
+        ..., min_length=1, max_length=255, description="Organization display name."
+    )
     slug: str = Field(
         ...,
         min_length=1,
@@ -73,13 +69,12 @@ class OrganizationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Team Schemas ──────────────────────────────────────────────────────────────
-
-
 class TeamCreate(BaseModel):
     """Request body for creating a team."""
 
-    name: str = Field(..., min_length=1, max_length=255, description="Team display name.")
+    name: str = Field(
+        ..., min_length=1, max_length=255, description="Team display name."
+    )
     slug: str = Field(
         ...,
         min_length=1,
@@ -108,13 +103,12 @@ class TeamListResponse(BaseModel):
     teams: List[TeamResponse]
 
 
-# ── API Key Schemas ───────────────────────────────────────────────────────────
-
-
 class APIKeyCreate(BaseModel):
     """Request body for creating an API key."""
 
-    name: str = Field(..., min_length=1, max_length=255, description="Descriptive name for this key.")
+    name: str = Field(
+        ..., min_length=1, max_length=255, description="Descriptive name for this key."
+    )
     role: Literal["admin", "member"] = Field(
         "member",
         description="Role granted to this key: 'admin' or 'member'.",
@@ -163,7 +157,9 @@ class APIKeyCreatedResponse(BaseModel):
 
     id: str
     name: str
-    key: str = Field(description="Plaintext API key. Displayed ONCE. Store it securely.")
+    key: str = Field(
+        description="Plaintext API key. Displayed ONCE. Store it securely."
+    )
     key_prefix: str
     role: str
     expires_at: Optional[datetime]
@@ -174,9 +170,6 @@ class APIKeyListResponse(BaseModel):
     """List of API key metadata for a team."""
 
     keys: List[APIKeyResponse]
-
-
-# ── Bootstrap Schemas ─────────────────────────────────────────────────────────
 
 
 class BootstrapRequest(BaseModel):
