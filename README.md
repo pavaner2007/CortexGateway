@@ -111,10 +111,22 @@ Your Application
 - **154 automated tests** — 100% passing across Phase 1, Phase 2, Phase 3, and Phase 4 with zero real API credits required.
 - **Code quality** — dead code removed, async lock protection added to circuit breaker state machine.
 
+### Phase 5 — Authentication & Multi-Tenancy [Done]
+- **API Key Authentication** — Bearer token auth on every protected endpoint (`Authorization: Bearer cxg_...`)
+- **CSPRNG key generation** — cryptographically secure, URL-safe keys with `cxg_` prefix
+- **HMAC-SHA256 hashing** — server-side pepper + `hmac.compare_digest` constant-time verification (timing-attack resistant)
+- **Organizations & Teams** — full tenant hierarchy (1 org → N teams → N API keys)
+- **RBAC** — `admin` and `member` roles; admin-only endpoints strictly enforced server-side
+- **API Key Lifecycle** — create, list (metadata only), revoke (soft-delete); plaintext shown exactly once at creation
+- **Bootstrap endpoint** — `POST /api/v1/bootstrap` creates first org + team + admin key in one call; guarded by `CORTEX_BOOTSTRAP_TOKEN`; auto-disabled after first org exists
+- **Cross-tenant isolation** — server enforces org/team ownership; no client-supplied identity is trusted
+- **Zero key-hash exposure** — `key_hash` field never appears in any API response (schema + integration tested)
+- **Context propagation** — `RequestContext` (org_id, team_id, key_id, role) flows through every request via ContextVar
+- **Alembic migrations** — async migration setup for `organizations`, `teams`, `api_keys` tables with FK cascade
+- **201 automated tests** — 100% passing across all 5 phases; 42 new Phase 5 tests (security, lifecycle, RBAC, leakage)
+
 ### Planned Features
-- Authentication & API key management
-- Teams & organizations
-- Rate limiting & budget controls
+- Rate limiting & budget controls per team
 - Cost tracking & persistent database analytics
 - Prometheus metrics & OpenTelemetry tracing
 - Full Admin dashboard
@@ -198,7 +210,7 @@ pytest tests/ -v
 ```
 
 ```
-154 passed in 3.80s
+201 passed in 3.84s
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -274,6 +286,16 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | `CIRCUIT_BREAKER_HALF_OPEN_TRIALS` | `1` | Trial requests allowed in HALF_OPEN state |
 | `RELIABILITY_MAX_FAILOVER_ATTEMPTS` | `2` | Maximum failover candidates tried per request |
 
+### Authentication Configuration (Phase 5)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_KEY_PEPPER` | — | **Change this** — HMAC-SHA256 pepper for key hashing. Generate: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `CORTEX_BOOTSTRAP_ENABLED` | `true` | Enable bootstrap endpoint. Set to `false` after first org is created |
+| `CORTEX_BOOTSTRAP_TOKEN` | — | **Change this** — Bearer token to protect the bootstrap endpoint |
+
+> **Security:** Set `CORTEX_BOOTSTRAP_ENABLED=false` permanently after initial setup. The bootstrap endpoint self-disables once an organization exists regardless of this flag.
+
 ---
 
 ## API Reference
@@ -310,6 +332,32 @@ Independently checks all dependencies. Returns `200 OK` when healthy, `503 Servi
 
 ## Unified Chat API & Routing Examples
 
+### Authentication
+
+All chat and management endpoints require a valid API key:
+
+```bash
+# All requests must include:
+-H "Authorization: Bearer cxg_your_api_key_here"
+```
+
+### Bootstrap (first-time setup)
+
+```bash
+# Create first organization, team, and admin API key
+curl -X POST http://localhost:8000/api/v1/bootstrap \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $CORTEX_BOOTSTRAP_TOKEN" \
+  -d '{
+    "organization_name": "My Company",
+    "organization_slug": "my-company",
+    "team_name": "Engineering",
+    "team_slug": "engineering",
+    "admin_key_name": "production-key"
+  }'
+# Returns the admin API key plaintext — store it securely, shown only once.
+```
+
 ### `POST /api/v1/chat/completions`
 
 Send a chat request to any provider using the exact same schema.
@@ -318,6 +366,7 @@ Send a chat request to any provider using the exact same schema.
 # 1. Automatic Multi-Factor Routing (model="auto")
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer cxg_your_key" \
   -d '{
     "model": "auto",
     "routing_mode": "auto",
@@ -327,6 +376,7 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
 # 2. Lowest Latency Mode (Selects ultra-fast model e.g. Groq Llama-3.1-8B)
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer cxg_your_key" \
   -d '{
     "model": "auto",
     "routing_mode": "lowest_latency",
@@ -336,6 +386,7 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
 # 3. Lowest Cost Mode (Prioritizes free self-hosted Ollama models)
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer cxg_your_key" \
   -d '{
     "model": "auto",
     "routing_mode": "lowest_cost",
@@ -345,6 +396,7 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
 # 4. Capability-Based Routing (Requires Vision capability -> routes to Gemini)
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer cxg_your_key" \
   -d '{
     "model": "auto",
     "required_capabilities": ["vision"],
@@ -354,6 +406,7 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
 # 5. Direct Manual Routing (Explicit provider & concrete model)
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer cxg_your_key" \
   -d '{
     "provider": "ollama",
     "model": "llama3.2",
@@ -451,6 +504,10 @@ To run local models without external API keys:
 | `PROVIDER_UNAVAILABLE` | 503 | Provider service down |
 | `PROVIDER_AUTHENTICATION_FAILED` | 502 | Invalid/missing API key |
 | `PROVIDER_ERROR` | 502 | Generic upstream error |
+| `AUTHENTICATION_FAILED` | 401 | Missing or invalid `cxg_` API key |
+| `FORBIDDEN` | 403 | Insufficient role (member vs admin) |
+| `BOOTSTRAP_ALREADY_COMPLETED` | 409 | Bootstrap called after org already exists |
+| `BOOTSTRAP_DISABLED` | 503 | Bootstrap endpoint is disabled |
 
 Full API docs → http://localhost:8000/docs
 
@@ -461,17 +518,35 @@ Full API docs → http://localhost:8000/docs
 ```
 CortexGateway/
 ├── backend/
+│   ├── alembic/                       # Alembic migration environment
+│   │   ├── env.py                     # Async migration runner
+│   │   ├── script.py.mako             # Migration file template
+│   │   └── versions/
+│   │       └── 0001_phase5_auth.py    # organizations, teams, api_keys tables
+│   ├── alembic.ini                    # Alembic config
 │   ├── app/
 │   │   ├── api/v1/endpoints/
 │   │   │   ├── health.py              # GET /, /version, /health
-│   │   │   ├── chat.py                # POST /api/v1/chat/completions
-│   │   │   └── providers.py           # GET /api/v1/providers/*
+│   │   │   ├── chat.py                # POST /api/v1/chat/completions (auth required)
+│   │   │   ├── providers.py           # GET /api/v1/providers/*
+│   │   │   ├── bootstrap.py           # POST /api/v1/bootstrap (Phase 5)
+│   │   │   ├── organizations.py       # Org CRUD (Phase 5)
+│   │   │   ├── teams.py               # Team CRUD (Phase 5)
+│   │   │   └── api_keys.py            # Key lifecycle (Phase 5)
+│   │   ├── auth/                      # Phase 5 — Auth & Multi-Tenancy
+│   │   │   ├── dependencies.py        # get_request_context, require_admin
+│   │   │   ├── exceptions.py          # AuthenticationError, AuthorizationError
+│   │   │   ├── models.py              # Organization, Team, APIKey ORM
+│   │   │   ├── schemas.py             # Pydantic schemas + RequestContext ContextVar
+│   │   │   ├── security.py            # CSPRNG keygen, HMAC-SHA256, compare_digest
+│   │   │   └── service.py             # AuthService DB operations
 │   │   ├── config/
 │   │   │   └── settings.py            # Pydantic Settings v2 (all phases)
 │   │   ├── core/
 │   │   │   └── logging.py             # Loguru structured logging
 │   │   ├── database/
-│   │   │   └── session.py             # SQLAlchemy 2.x async engine
+│   │   │   ├── base.py                # Shared DeclarativeBase for ORM discovery
+│   │   │   └── session.py             # SQLAlchemy 2.x async engine + get_db_dependency
 │   │   ├── middleware/
 │   │   │   ├── request_id.py          # X-Request-ID propagation
 │   │   │   └── logging.py             # Request/response logging
@@ -481,8 +556,7 @@ CortexGateway/
 │   │   │   ├── exceptions.py          # Typed provider exception hierarchy
 │   │   │   ├── gemini_provider.py     # Google Gemini async adapter
 │   │   │   ├── groq_provider.py       # Groq async adapter
-│   │   │   ├── ollama_provider.py     # Ollama local async adapter
-│   │   │   └── openai_provider.py     # OpenAI async adapter (inactive)
+│   │   │   └── ollama_provider.py     # Ollama local async adapter
 │   │   ├── routing/                   # Phase 3 — Intelligent Routing Engine
 │   │   │   ├── router.py              # RoutingEngine orchestrator
 │   │   │   ├── candidates.py          # CandidateBuilder
@@ -503,7 +577,7 @@ CortexGateway/
 │   │   │   ├── responses.py           # Shared Pydantic v2 response models
 │   │   │   └── chat.py                # Chat request/response + reliability metadata
 │   │   ├── services/
-│   │   │   └── chat_service.py        # ChatService — routing + reliability orchestration
+│   │   │   └── chat_service.py        # ChatService — routing + reliability + context
 │   │   ├── utils/
 │   │   │   └── redis_client.py        # Async Redis client
 │   │   ├── exceptions.py              # Global exception handlers
@@ -512,9 +586,12 @@ CortexGateway/
 │   │   ├── conftest.py                # Fixtures (DB/Redis mocked)
 │   │   ├── test_endpoints.py          # Phase 1 endpoint tests
 │   │   ├── test_providers.py          # Phase 2 provider unit tests
-│   │   ├── test_chat_api.py           # Phase 2 API integration tests
+│   │   ├── test_chat_api.py           # Phase 2–4 API integration tests
 │   │   ├── test_routing.py            # Phase 3 routing engine tests
-│   │   └── test_reliability.py        # Phase 4 reliability tests
+│   │   ├── test_reliability.py        # Phase 4 reliability tests
+│   │   ├── test_auth_security.py      # Phase 5 security unit tests
+│   │   ├── test_auth_lifecycle.py     # Phase 5 lifecycle + RBAC tests
+│   │   └── test_auth_security_leakage.py  # Phase 5 leakage tests
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
@@ -548,12 +625,11 @@ CortexGateway/
 | 2 | Unified Multi-LLM Gateway | **Done** |
 | 3 | Intelligent Routing Engine | **Done** |
 | 4 | Reliability & Resilience | **Done** |
-| 5 | Authentication & API Keys | Planned |
-| 6 | Teams & Organizations | Planned |
-| 7 | Rate Limiting & Budgets | Planned |
-| 8 | Cost Tracking & Analytics | Planned |
-| 9 | Prometheus & OpenTelemetry | Planned |
-| 10 | Admin Dashboard | Planned |
+| 5 | Authentication & Multi-Tenancy | **Done** |
+| 6 | Rate Limiting & Budgets | Planned |
+| 7 | Cost Tracking & Analytics | Planned |
+| 8 | Prometheus & OpenTelemetry | Planned |
+| 9 | Admin Dashboard | Planned |
 
 ---
 
