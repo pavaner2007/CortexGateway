@@ -25,22 +25,25 @@
 
 ## What is Cortex Gateway?
 
-Cortex Gateway is a centralized AI infrastructure platform designed to give engineering teams complete control over their LLM usage. Instead of each application directly calling OpenAI, Gemini, Groq, or Anthropic, all traffic flows through Cortex Gateway — giving you a single place to manage routing, costs, reliability, and compliance.
+Cortex Gateway is a centralized AI infrastructure platform designed to give engineering teams complete control over their LLM usage. Instead of each application directly calling OpenAI, Gemini, Groq, or Anthropic, all traffic flows through Cortex Gateway — giving you a single place to manage routing, costs, reliability, rate limits, and compliance.
 
 ```
 Your Application
       │
       ▼
-┌─────────────────────────────────────────────┐
-│              Cortex Gateway                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │  Routing │  │ Rate Limit│  │Analytics │  │
-│  └──────────┘  └──────────┘  └──────────┘  │
-└──────┬──────────────┬──────────────┬─────────┘
-       │              │              │
-       ▼              ▼              ▼
-     Gemini          Groq          Ollama
-    (Cloud)        (Cloud)         (Local)
+┌─────────────────────────────────────────────────────┐
+│                  Cortex Gateway                      │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────┐    │
+│  │  Auth    │  │Rate Limit│  │Budget / Cost   │    │
+│  └──────────┘  └──────────┘  └────────────────┘    │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────┐    │
+│  │  Routing │  │Reliability│  │Circuit Breaker │    │
+│  └──────────┘  └──────────┘  └────────────────┘    │
+└──────┬──────────────┬─────────────────┬─────────────┘
+       │              │                 │
+       ▼              ▼                 ▼
+     Gemini          Groq            Ollama
+    (Cloud)        (Cloud)           (Local)
 ```
 
 ---
@@ -51,7 +54,7 @@ Your Application
 |-------|-----------|
 | **Backend** | FastAPI · Python 3.12 · Uvicorn |
 | **Database** | PostgreSQL 16 · SQLAlchemy 2.x · asyncpg |
-| **Cache** | Redis 7 · redis-py async |
+| **Cache / Rate Limiting** | Redis 7 · redis-py async · Lua atomic scripts |
 | **Config** | Pydantic Settings v2 |
 | **Logging** | Loguru |
 | **Frontend** | React 18 · TypeScript · Vite · Tailwind CSS |
@@ -63,7 +66,7 @@ Your Application
 
 ## Features
 
-### Phase 1 — Infrastructure Foundation [Done]
+### Phase 1 — Infrastructure Foundation ✅
 - **Async FastAPI backend** with full lifespan management
 - **PostgreSQL** with SQLAlchemy 2.x async engine and asyncpg driver
 - **Redis** async client with connection pooling
@@ -75,7 +78,7 @@ Your Application
 - **React dashboard** — live system status with 30s auto-polling
 - **Docker Compose** — full multi-service stack, one command to run
 
-### Phase 2 — Unified Multi-LLM Gateway [Done]
+### Phase 2 — Unified Multi-LLM Gateway ✅
 - **Three active provider adapters** — Google Gemini (Cloud), Groq (Cloud), Ollama (Local / Self-hosted)
 - **Provider abstraction** — `BaseLLMProvider` ABC, Open/Closed Principle supporting cloud and local runtimes
 - **Provider registry** — register, retrieve, discover providers at runtime
@@ -86,50 +89,60 @@ Your Application
 - **Safe credential handling** — missing keys disable cloud providers gracefully, zero keys needed for Ollama
 - **Provider & Model discovery** — list providers, get details, dynamic model discovery (including local Ollama models)
 
-### Phase 3 — Intelligent Routing Engine [Done]
+### Phase 3 — Intelligent Routing Engine ✅
 - **6 Dynamic Routing Modes**:
-  - `auto`: Balanced multi-factor scoring across health (30%), success rate (30%), latency (20%), and cost (20%).
-  - `lowest_latency`: Response speed prioritized (60% latency weight, selects ultra-fast models like Groq Llama 3.1 8B Instant).
-  - `lowest_cost`: Cost-efficiency prioritized (60% cost weight, prioritizes free self-hosted Ollama models).
-  - `best_available`: Reliability maximized (80% health + success rate combined).
-  - `capability_based`: Strict pre-filtering for required modalities (e.g., `vision`, `json`, `code`, `function_calling`).
-  - `manual`: Direct bypass with deterministic explicit provider + model targeting.
-- **Capability Pre-filtering** — Incompatible candidates are discarded before scoring (e.g. vision tasks route strictly to multimodal models).
-- **Runtime Rolling Statistics** — In-memory rolling tracker for request volume, success rates, and exponential moving average latency.
-- **Deterministic Tie-Breaking & Cold Start** — Multi-tiered deterministic tie-breaker guarantees repeatable routing decisions.
-- **Routing Metadata Propagation** — Responses include `routing_mode` for full client observability.
+  - `auto`: Balanced multi-factor scoring across health (30%), success rate (30%), latency (20%), and cost (20%)
+  - `lowest_latency`: Response speed prioritized (60% latency weight)
+  - `lowest_cost`: Cost-efficiency prioritized (60% cost weight, prioritizes free self-hosted Ollama)
+  - `best_available`: Reliability maximized (80% health + success rate combined)
+  - `capability_based`: Strict pre-filtering for required modalities (e.g., `vision`, `json`, `code`)
+  - `manual`: Direct bypass with deterministic explicit provider + model targeting
+- **Capability Pre-filtering** — Incompatible candidates discarded before scoring
+- **Runtime Rolling Statistics** — In-memory tracker for success rates and EMA latency
+- **Deterministic Tie-Breaking** — Multi-tiered tie-breaker guarantees repeatable routing decisions
+- **Routing Metadata Propagation** — Responses include `routing_mode` for full observability
 
-### Phase 4 — Reliability and Resilience [Done]
-- **Provider-Specific Timeouts** — Independently configurable timeouts for Gemini (30s), Groq (30s), and Ollama (60s).
-- **Total Request Deadline** — Configurable maximum request deadline (120s) preventing unbounded retry and failover chains.
-- **Transient Failure Classification** — Retries only on network drops, timeouts, 5xx server errors, and service outages; client 4xx errors fast-fail without retry.
-- **Exponential Backoff & Jitter** — Non-blocking async sleep with randomized jitter to mitigate synchronized retry storms.
-- **In-Memory Circuit Breaker** — 3-state machine (CLOSED, OPEN, HALF_OPEN) per provider. Tripped OPEN circuits fast-fail immediately without network calls or cascading slowness.
-- **Automated Failover via Phase 3 Scorer** — Exhausted retries or tripped circuits automatically trigger next-best candidate discovery from Phase 3 router with loop prevention.
-- **Capability-Preserving Fallback** — Fallbacks strictly satisfy original request capability constraints (e.g., vision).
-- **Rich Reliability Metadata** — Responses carry `selected_provider`, `original_provider`, `failover_triggered`, `retry_count`, `failover_attempts`, and `circuit_breaker_state`.
-- **154 automated tests** — 100% passing across Phase 1, Phase 2, Phase 3, and Phase 4 with zero real API credits required.
-- **Code quality** — dead code removed, async lock protection added to circuit breaker state machine.
+### Phase 4 — Reliability and Resilience ✅
+- **Provider-Specific Timeouts** — Independently configurable per provider
+- **Total Request Deadline** — Configurable maximum deadline preventing unbounded retry chains
+- **Transient Failure Classification** — Retries only on transient errors; client 4xx fast-fail
+- **Exponential Backoff & Jitter** — Non-blocking async sleep with randomized jitter
+- **In-Memory Circuit Breaker** — 3-state machine (CLOSED → OPEN → HALF_OPEN) per provider
+- **Automated Failover** — Exhausted retries trigger next-best candidate from Phase 3 scorer
+- **Capability-Preserving Fallback** — Fallbacks satisfy original request capability constraints
+- **Rich Reliability Metadata** — `selected_provider`, `original_provider`, `failover_triggered`, `retry_count`, `circuit_breaker_state`
 
-### Phase 5 — Authentication & Multi-Tenancy [Done]
+### Phase 5 — Authentication & Multi-Tenancy ✅
 - **API Key Authentication** — Bearer token auth on every protected endpoint (`Authorization: Bearer cxg_...`)
 - **CSPRNG key generation** — cryptographically secure, URL-safe keys with `cxg_` prefix
 - **HMAC-SHA256 hashing** — server-side pepper + `hmac.compare_digest` constant-time verification (timing-attack resistant)
 - **Organizations & Teams** — full tenant hierarchy (1 org → N teams → N API keys)
 - **RBAC** — `admin` and `member` roles; admin-only endpoints strictly enforced server-side
-- **API Key Lifecycle** — create, list (metadata only), revoke (soft-delete); plaintext shown exactly once at creation
-- **Bootstrap endpoint** — `POST /api/v1/bootstrap` creates first org + team + admin key in one call; guarded by `CORTEX_BOOTSTRAP_TOKEN`; auto-disabled after first org exists
-- **Cross-tenant isolation** — server enforces org/team ownership; no client-supplied identity is trusted
-- **Zero key-hash exposure** — `key_hash` field never appears in any API response (schema + integration tested)
+- **API Key Lifecycle** — create, list (metadata only), revoke (soft-delete); plaintext shown exactly once
+- **Bootstrap endpoint** — `POST /api/v1/bootstrap` creates first org + team + admin key; guarded by `CORTEX_BOOTSTRAP_TOKEN`; auto-disabled after first org exists
+- **Cross-tenant isolation** — server enforces org/team ownership; no client-supplied identity trusted
+- **Zero key-hash exposure** — `key_hash` never appears in any API response
 - **Context propagation** — `RequestContext` (org_id, team_id, key_id, role) flows through every request via ContextVar
-- **Alembic migrations** — async migration setup for `organizations`, `teams`, `api_keys` tables with FK cascade
-- **201 automated tests** — 100% passing across all 5 phases; 42 new Phase 5 tests (security, lifecycle, RBAC, leakage)
+- **Alembic migrations** — `organizations`, `teams`, `api_keys` tables with FK cascade
 
-### Planned Features
-- Rate limiting & budget controls per team
-- Cost tracking & persistent database analytics
-- Prometheus metrics & OpenTelemetry tracing
-- Full Admin dashboard
+### Phase 6 — Rate Limiting & Budget Management ✅
+- **Fixed-Window Rate Limiting** — Redis-backed Lua-atomic counters at three independent scopes: API key, team, organization
+- **Atomic Lua Scripts** — single round-trip INCR + EXPIREAT with race-free enforcement; no process-local counters
+- **Fail-Open Rate Limiter** — Redis unavailability allows traffic to pass (logged as warning, not a hard failure)
+- **429 with Retry-After** — rate-limited responses carry `Retry-After` header indicating exact window reset time
+- **Team-Level Budgets** — spending limits with configurable period (daily / weekly / monthly)
+- **Three Enforcement Policies**:
+  - `BLOCK` — reject request with HTTP 402 when budget would be exceeded
+  - `WARN` — allow request but emit structured warning log when threshold crossed
+  - `DOWNGRADE` — automatically route to cheapest compatible provider/model within budget using Phase 3 scorer
+- **Atomic Budget Reservation** — PostgreSQL `SELECT FOR UPDATE` prevents concurrent overspend; `reserved` column tracks in-flight amounts
+- **Lazy Period Rollover** — budget resets on first access after period_end; handled inside the DB lock (no scheduler needed)
+- **Split Input/Output Pricing** — `ModelMetadata` extended with `input_cost_per_1k` and `output_cost_per_1k` for accurate per-request cost accounting
+- **Estimated vs. Actual Cost** — pre-execution estimate with 1.5× safety margin; reconciled with actual token counts post-execution
+- **Budget Reconciliation** — reservation released + actual cost charged after every request; reservation released without charge on provider failure
+- **Budget Management API** — `POST/GET/PATCH/DELETE /api/v1/teams/{team_id}/budget` (admin only)
+- **Cost & Budget Metadata** — response carries `estimated_cost`, `actual_cost`, `remaining_budget` (optional), `budget_warning`, `budget_downgraded`, `rate_limit_remaining`
+- **238 automated tests** — 100% passing across all 6 phases; zero real API credits required
 
 ---
 
@@ -151,13 +164,13 @@ cd CortexGateway
 
 # 2. Set up environment
 cp backend/.env.example backend/.env
-# Edit backend/.env — set POSTGRES_PASSWORD and SECRET_KEY
+# Edit backend/.env — set POSTGRES_PASSWORD, SECRET_KEY, and API_KEY_PEPPER
 
 # 3. Start all services
 docker compose up --build
 ```
 
-That's it. All 4 services start automatically.
+That's it. All services start automatically.
 
 | Service | URL |
 |---------|-----|
@@ -210,7 +223,7 @@ pytest tests/ -v
 ```
 
 ```
-201 passed in 3.84s
+238 passed in 4.41s
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -295,6 +308,29 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | `CORTEX_BOOTSTRAP_TOKEN` | — | **Change this** — Bearer token to protect the bootstrap endpoint |
 
 > **Security:** Set `CORTEX_BOOTSTRAP_ENABLED=false` permanently after initial setup. The bootstrap endpoint self-disables once an organization exists regardless of this flag.
+
+### Rate Limiting Configuration (Phase 6)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATE_LIMIT_ENABLED` | `true` | Enable Redis-backed rate limiting globally |
+| `RATE_LIMIT_API_KEY_REQUESTS` | `100` | Max requests per API key per window |
+| `RATE_LIMIT_API_KEY_WINDOW_SECONDS` | `60` | API key window duration in seconds |
+| `RATE_LIMIT_TEAM_REQUESTS` | `500` | Max requests per team per window |
+| `RATE_LIMIT_TEAM_WINDOW_SECONDS` | `60` | Team window duration in seconds |
+| `RATE_LIMIT_ORG_REQUESTS` | `2000` | Max requests per organization per window |
+| `RATE_LIMIT_ORG_WINDOW_SECONDS` | `60` | Org window duration in seconds |
+
+### Budget Configuration (Phase 6)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUDGET_ENABLED` | `true` | Enable team-level budget enforcement |
+| `BUDGET_DEFAULT_POLICY` | `BLOCK` | Default policy: `BLOCK` \| `WARN` \| `DOWNGRADE` |
+| `BUDGET_WARNING_THRESHOLD_PERCENT` | `80` | Log warning when usage reaches this % of limit |
+| `BUDGET_EXPOSE_REMAINING` | `false` | Include `remaining_budget` in response metadata |
+| `OLLAMA_COST_PER_1K_INPUT_TOKENS` | `0.00` | Ollama input token cost (override for cost accounting) |
+| `OLLAMA_COST_PER_1K_OUTPUT_TOKENS` | `0.00` | Ollama output token cost |
 
 ---
 
@@ -393,7 +429,7 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
     "messages": [{"role": "user", "content": "Summarize this long document..."}]
   }'
 
-# 4. Capability-Based Routing (Requires Vision capability -> routes to Gemini)
+# 4. Capability-Based Routing (Requires Vision capability → routes to Gemini)
 curl -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer cxg_your_key" \
@@ -412,6 +448,114 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
     "model": "llama3.2",
     "messages": [{"role": "user", "content": "Explain Docker in simple terms."}]
   }'
+```
+
+**Normalized response (identical shape for all providers, with Phase 6 cost/budget metadata):**
+```json
+{
+  "id": "ctx_abc123def456",
+  "object": "chat.completion",
+  "created": 1710000000,
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "choices": [{
+    "index": 0,
+    "message": {"role": "assistant", "content": "Docker is ..."},
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 85,
+    "total_tokens": 97
+  },
+  "metadata": {
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "latency_ms": 320.5,
+    "routing_mode": "auto",
+    "selected_provider": "groq",
+    "selected_model": "llama-3.3-70b-versatile",
+    "original_provider": "groq",
+    "failover_triggered": false,
+    "retry_count": 0,
+    "failover_attempts": 0,
+    "circuit_breaker_state": "closed",
+    "estimated_cost": 0.00001234,
+    "actual_cost": 0.00000987,
+    "remaining_budget": null,
+    "budget_warning": false,
+    "budget_downgraded": false,
+    "rate_limit_remaining": 99
+  }
+}
+```
+
+---
+
+## Budget Management API
+
+All budget endpoints require an **admin** API key for the team's organization.
+
+### Create a Team Budget
+
+```bash
+curl -X POST http://localhost:8000/api/v1/teams/{team_id}/budget \
+  -H "Authorization: Bearer cxg_admin_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "limit_amount": 50.00,
+    "period": "monthly",
+    "policy": "BLOCK"
+  }'
+```
+
+**Policy options:**
+
+| Policy | Behavior |
+|--------|----------|
+| `BLOCK` | Reject with HTTP 402 when budget would be exceeded |
+| `WARN` | Allow request; emit structured warning log when threshold crossed |
+| `DOWNGRADE` | Automatically route to cheapest compatible provider within remaining budget |
+
+### Get Team Budget
+
+```bash
+curl http://localhost:8000/api/v1/teams/{team_id}/budget \
+  -H "Authorization: Bearer cxg_admin_key"
+```
+
+```json
+{
+  "id": "budget-uuid",
+  "team_id": "team-uuid",
+  "limit_amount": 50.0,
+  "current_usage": 12.34,
+  "period": "monthly",
+  "period_start": "2026-09-01T00:00:00Z",
+  "period_end": "2026-10-01T00:00:00Z",
+  "policy": "BLOCK",
+  "enabled": true,
+  "remaining_amount": 37.66,
+  "usage_percentage": 24.68,
+  "created_at": "2026-09-01T00:00:00Z",
+  "updated_at": "2026-09-14T20:00:00Z"
+}
+```
+
+### Update Budget
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/teams/{team_id}/budget \
+  -H "Authorization: Bearer cxg_admin_key" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_amount": 100.00, "policy": "WARN"}'
+```
+
+### Delete Budget
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/teams/{team_id}/budget \
+  -H "Authorization: Bearer cxg_admin_key"
+# Returns 204 No Content
 ```
 
 ---
@@ -435,60 +579,12 @@ To run local models without external API keys:
 
 ---
 
-**Normalized response (identical shape for all providers, with Phase 4 reliability metadata):**
-```json
-{
-  "id": "ctx_abc123def456",
-  "object": "chat.completion",
-  "created": 1710000000,
-  "provider": "ollama",
-  "model": "llama3.2",
-  "choices": [{
-    "index": 0,
-    "message": {"role": "assistant", "content": "Docker is ..."},
-    "finish_reason": "stop"
-  }],
-  "usage": {
-    "prompt_tokens": 12,
-    "completion_tokens": 85,
-    "total_tokens": 97
-  },
-  "metadata": {
-    "request_id": "550e8400-e29b-41d4-a716-446655440000",
-    "latency_ms": 320.5,
-    "routing_mode": "auto",
-    "selected_provider": "ollama",
-    "selected_model": "llama3.2",
-    "original_provider": "groq",
-    "failover_triggered": true,
-    "retry_count": 1,
-    "failover_attempts": 1,
-    "circuit_breaker_state": "closed"
-  }
-}
-```
-
-### `GET /api/v1/providers`
-```json
-{"providers": [{"name": "gemini", "enabled": true, "available": true}, {"name": "groq", "enabled": true, "available": true}, {"name": "ollama", "enabled": true, "available": true}]}
-```
-
-### `GET /api/v1/providers/{provider}`
-```json
-{"name": "ollama", "enabled": true, "available": true, "capabilities": ["chat"]}
-```
-
-### `GET /api/v1/providers/{provider}/models`
-```json
-{"provider": "ollama", "models": ["llama3.2:latest", "qwen2.5:latest"]}
-```
-
 ### Error Response Format
 ```json
 {
   "error": {
-    "code": "PROVIDER_RATE_LIMITED",
-    "message": "The selected provider is currently rate limited.",
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Rate limit exceeded. Please retry after the window resets.",
     "request_id": "550e8400-e29b-41d4-a716-446655440000"
   }
 }
@@ -500,16 +596,72 @@ To run local models without external API keys:
 | `PROVIDER_DISABLED` | 503 | Provider explicitly disabled |
 | `INVALID_MODEL` | 400 | Model not found on provider |
 | `PROVIDER_TIMEOUT` | 504 | Request exceeded timeout |
-| `PROVIDER_RATE_LIMITED` | 429 | Provider rate limit hit |
+| `PROVIDER_RATE_LIMITED` | 429 | Provider upstream rate limit hit |
 | `PROVIDER_UNAVAILABLE` | 503 | Provider service down |
 | `PROVIDER_AUTHENTICATION_FAILED` | 502 | Invalid/missing API key |
 | `PROVIDER_ERROR` | 502 | Generic upstream error |
 | `AUTHENTICATION_FAILED` | 401 | Missing or invalid `cxg_` API key |
 | `FORBIDDEN` | 403 | Insufficient role (member vs admin) |
+| `RATE_LIMIT_EXCEEDED` | 429 | Gateway rate limit hit (key/team/org scope) — includes `Retry-After` header |
+| `BUDGET_EXCEEDED` | 402 | Team budget exhausted (BLOCK policy) |
 | `BOOTSTRAP_ALREADY_COMPLETED` | 409 | Bootstrap called after org already exists |
 | `BOOTSTRAP_DISABLED` | 503 | Bootstrap endpoint is disabled |
 
 Full API docs → http://localhost:8000/docs
+
+---
+
+## Request Pipeline (Phase 6)
+
+Every authenticated request passes through this ordered pipeline:
+
+```
+POST /api/v1/chat/completions
+        │
+        ▼
+┌──────────────────────────┐
+│  1. Authentication       │  Bearer cxg_... → RequestContext (org/team/key/role)
+└──────────┬───────────────┘
+           │
+        ▼
+┌──────────────────────────┐
+│  2. Rate Limiting        │  Redis Lua: key-scope + team-scope + org-scope
+└──────────┬───────────────┘  → 429 RATE_LIMIT_EXCEEDED if any scope fails
+           │
+        ▼
+┌──────────────────────────┐
+│  3. Budget Pre-Check     │  PostgreSQL SELECT FOR UPDATE + estimated_cost
+└──────────┬───────────────┘  → 402 BUDGET_EXCEEDED (BLOCK) or downgrade candidate
+           │                    selected (DOWNGRADE)
+        ▼
+┌──────────────────────────┐
+│  4. Routing Engine       │  Phase 3: score candidates, apply policy weights
+└──────────┬───────────────┘
+           │
+        ▼
+┌──────────────────────────┐
+│  5. Reliability Executor │  Phase 4: retries + circuit breaker + failover
+└──────────┬───────────────┘
+           │
+        ▼
+┌──────────────────────────┐
+│  6. Provider Adapter     │  Gemini / Groq / Ollama
+└──────────┬───────────────┘
+           │
+        ▼
+┌──────────────────────────┐
+│  7. Actual Cost Calc     │  actual_tokens × split input/output pricing
+└──────────┬───────────────┘
+           │
+        ▼
+┌──────────────────────────┐
+│  8. Budget Reconcile     │  reserved -= estimated; usage += actual
+└──────────┬───────────────┘  (released without charge on provider failure)
+           │
+        ▼
+    ChatCompletionResponse
+    (with cost + budget metadata)
+```
 
 ---
 
@@ -522,17 +674,19 @@ CortexGateway/
 │   │   ├── env.py                     # Async migration runner
 │   │   ├── script.py.mako             # Migration file template
 │   │   └── versions/
-│   │       └── 0001_phase5_auth.py    # organizations, teams, api_keys tables
+│   │       ├── 0001_phase5_auth.py    # organizations, teams, api_keys tables
+│   │       └── 0002_phase6_budgets.py # budgets table with reserved column
 │   ├── alembic.ini                    # Alembic config
 │   ├── app/
 │   │   ├── api/v1/endpoints/
 │   │   │   ├── health.py              # GET /, /version, /health
-│   │   │   ├── chat.py                # POST /api/v1/chat/completions (auth required)
+│   │   │   ├── chat.py                # POST /api/v1/chat/completions (Phase 2–6)
 │   │   │   ├── providers.py           # GET /api/v1/providers/*
 │   │   │   ├── bootstrap.py           # POST /api/v1/bootstrap (Phase 5)
 │   │   │   ├── organizations.py       # Org CRUD (Phase 5)
 │   │   │   ├── teams.py               # Team CRUD (Phase 5)
-│   │   │   └── api_keys.py            # Key lifecycle (Phase 5)
+│   │   │   ├── api_keys.py            # Key lifecycle (Phase 5)
+│   │   │   └── budget.py              # Budget CRUD (Phase 6, admin only)
 │   │   ├── auth/                      # Phase 5 — Auth & Multi-Tenancy
 │   │   │   ├── dependencies.py        # get_request_context, require_admin
 │   │   │   ├── exceptions.py          # AuthenticationError, AuthorizationError
@@ -540,6 +694,15 @@ CortexGateway/
 │   │   │   ├── schemas.py             # Pydantic schemas + RequestContext ContextVar
 │   │   │   ├── security.py            # CSPRNG keygen, HMAC-SHA256, compare_digest
 │   │   │   └── service.py             # AuthService DB operations
+│   │   ├── budget/                    # Phase 6 — Budget Management
+│   │   │   ├── cost.py                # CostCalculator (estimate + actual)
+│   │   │   ├── exceptions.py          # RateLimitExceeded (429), BudgetExceeded (402)
+│   │   │   ├── models.py              # Budget ORM with reserved column
+│   │   │   ├── schemas.py             # Pydantic CRUD schemas
+│   │   │   └── service.py             # BudgetService (SELECT FOR UPDATE atomicity)
+│   │   ├── rate_limit/                # Phase 6 — Rate Limiting
+│   │   │   ├── limiter.py             # RateLimiter (Lua atomic fixed-window)
+│   │   │   └── models.py              # RateLimitResult, RateLimitOutcome
 │   │   ├── config/
 │   │   │   └── settings.py            # Pydantic Settings v2 (all phases)
 │   │   ├── core/
@@ -562,9 +725,9 @@ CortexGateway/
 │   │   │   ├── candidates.py          # CandidateBuilder
 │   │   │   ├── scorer.py              # CandidateScorer (weighted scoring)
 │   │   │   ├── stats.py               # ProviderStatsTracker (rolling metrics)
-│   │   │   ├── metadata.py            # ModelMetadataCatalog
+│   │   │   ├── metadata.py            # ModelMetadataCatalog (with split pricing)
 │   │   │   ├── policies.py            # RoutingPolicyRegistry (mode weights)
-│   │   │   ├── models.py              # RoutingCandidate, RoutingDecision
+│   │   │   ├── models.py              # ModelMetadata (input/output cost), RoutingDecision
 │   │   │   └── exceptions.py          # Routing-specific exceptions
 │   │   ├── reliability/               # Phase 4 — Reliability and Resilience
 │   │   │   ├── executor.py            # ReliabilityExecutor (retries, failover)
@@ -575,23 +738,25 @@ CortexGateway/
 │   │   │   └── models.py              # ReliabilityContext, AttemptRecord
 │   │   ├── schemas/
 │   │   │   ├── responses.py           # Shared Pydantic v2 response models
-│   │   │   └── chat.py                # Chat request/response + reliability metadata
+│   │   │   └── chat.py                # Chat request/response + Phase 6 cost metadata
 │   │   ├── services/
-│   │   │   └── chat_service.py        # ChatService — routing + reliability + context
+│   │   │   └── chat_service.py        # ChatService — full Phase 1–6 pipeline
 │   │   ├── utils/
 │   │   │   └── redis_client.py        # Async Redis client
-│   │   ├── exceptions.py              # Global exception handlers
+│   │   ├── exceptions.py              # Global exception handlers (incl. 402, 429)
 │   │   └── main.py                    # FastAPI app + lifespan
 │   ├── tests/
 │   │   ├── conftest.py                # Fixtures (DB/Redis mocked)
 │   │   ├── test_endpoints.py          # Phase 1 endpoint tests
 │   │   ├── test_providers.py          # Phase 2 provider unit tests
-│   │   ├── test_chat_api.py           # Phase 2–4 API integration tests
+│   │   ├── test_chat_api.py           # Phase 2–6 API integration tests
 │   │   ├── test_routing.py            # Phase 3 routing engine tests
 │   │   ├── test_reliability.py        # Phase 4 reliability tests
 │   │   ├── test_auth_security.py      # Phase 5 security unit tests
 │   │   ├── test_auth_lifecycle.py     # Phase 5 lifecycle + RBAC tests
-│   │   └── test_auth_security_leakage.py  # Phase 5 leakage tests
+│   │   ├── test_auth_security_leakage.py  # Phase 5 leakage tests
+│   │   ├── test_rate_limiting.py      # Phase 6 rate limiting tests
+│   │   └── test_budget.py             # Phase 6 budget + cost tests
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
@@ -621,13 +786,13 @@ CortexGateway/
 
 | # | Feature | Status |
 |---|---------|--------|
-| 1 | Infrastructure Foundation | **Done** |
-| 2 | Unified Multi-LLM Gateway | **Done** |
-| 3 | Intelligent Routing Engine | **Done** |
-| 4 | Reliability & Resilience | **Done** |
-| 5 | Authentication & Multi-Tenancy | **Done** |
-| 6 | Rate Limiting & Budgets | Planned |
-| 7 | Cost Tracking & Analytics | Planned |
+| 1 | Infrastructure Foundation | ✅ **Done** |
+| 2 | Unified Multi-LLM Gateway | ✅ **Done** |
+| 3 | Intelligent Routing Engine | ✅ **Done** |
+| 4 | Reliability & Resilience | ✅ **Done** |
+| 5 | Authentication & Multi-Tenancy | ✅ **Done** |
+| 6 | Rate Limiting & Budget Management | ✅ **Done** |
+| 7 | Persistent Usage Analytics | Planned |
 | 8 | Prometheus & OpenTelemetry | Planned |
 | 9 | Admin Dashboard | Planned |
 

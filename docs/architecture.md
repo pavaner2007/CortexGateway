@@ -1,59 +1,161 @@
-# Cortex Gateway — Architecture (Phase 1 + Phase 2)
+# Cortex Gateway — Architecture Reference (Phases 1–6)
 
 ## Overview
 
-Phase 1 establishes the production foundation: a clean, async FastAPI backend
-connected to PostgreSQL and Redis, a React dashboard frontend, and a Docker
-Compose stack — with no LLM business logic yet.
+Cortex Gateway is a production-quality Multi-LLM Gateway built across six progressive phases:
+
+| Phase | Name | Key Concern |
+|-------|------|-------------|
+| 1 | Infrastructure Foundation | PostgreSQL, Redis, async FastAPI, health checks |
+| 2 | Unified Multi-LLM Gateway | Provider adapters, normalized API |
+| 3 | Intelligent Routing Engine | Multi-mode scoring, capability pre-filtering |
+| 4 | Reliability & Resilience | Circuit breakers, retries, automatic failover |
+| 5 | Authentication & Multi-Tenancy | API keys, RBAC, orgs, teams |
+| 6 | Rate Limiting & Budget Management | Redis counters, budget reservation, cost tracking |
 
 ---
 
-## High-Level Architecture
+## Full Request Pipeline (Phase 6)
+
+Every request to `POST /api/v1/chat/completions` traverses this ordered pipeline:
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                         Client Browser                        │
-└────────────────────────┬─────────────────────────────────────┘
+Client
+  │  Authorization: Bearer cxg_...
+  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  ASGI Middleware Stack                                           │
+│  1. CORSMiddleware                                               │
+│  2. RequestIDMiddleware  (X-Request-ID: <uuid>)                 │
+│  3. RequestLoggingMiddleware                                      │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 5 — Authentication                                        │
+│  get_request_context()                                           │
+│  • Reads Bearer token from Authorization header                  │
+│  • Looks up key_hash in api_keys table                          │
+│  • Validates HMAC-SHA256 with pepper                            │
+│  • Checks expiry, revocation                                     │
+│  • Returns RequestContext(org_id, team_id, key_id, role)        │
+│  → 401 AUTHENTICATION_FAILED on any failure                     │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 6 — Rate Limiting                                         │
+│  RateLimiter.check_all()                                         │
+│  • Checks 3 independent fixed-window counters via Lua script:   │
+│    ratelimit:key:<api_key_id>:<window_start>                    │
+│    ratelimit:team:<team_id>:<window_start>                      │
+│    ratelimit:org:<org_id>:<window_start>                        │
+│  • All counters incremented atomically (INCR + EXPIREAT)        │
+│  • Fails open if Redis is unavailable                           │
+│  → 429 RATE_LIMIT_EXCEEDED + Retry-After header                 │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 3 — Routing Engine                                        │
+│  RoutingEngine.route()                                           │
+│  • Resolves routing mode (manual / auto / lowest_cost / etc.)   │
+│  • CandidateBuilder.build_candidates() — active providers       │
+│  • Capability pre-filter (vision, json, code, tools)            │
+│  • Health filter                                                 │
+│  • CandidateScorer — weighted scoring (health/success/lat/cost) │
+│  → RoutingDecision(provider, model, score)                       │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 6 — Budget Pre-Check & Reservation                        │
+│  BudgetService.check_and_reserve()                               │
+│  • CostCalculator.estimate_cost() — input chars/4 + max_tokens  │
+│    × 1.5 safety margin × split input/output pricing             │
+│  • SELECT FOR UPDATE locks budget row (prevents overspend)      │
+│  • Lazy rollover if period_end < utcnow (resets inside lock)    │
+│  BLOCK  → 402 BUDGET_EXCEEDED if usage+reserved+est > limit     │
+│  WARN   → allow; log warning if threshold crossed                │
+│  DOWNGRADE → score affordable candidates; pick cheapest via     │
+│    Phase 3 CandidateScorer; → 402 if none found                 │
+│  • budget.reserved += estimated_cost (in-flight reservation)    │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 4 — Reliability Executor                                  │
+│  ReliabilityExecutor.execute()                                   │
+│  • Enforces total request deadline                               │
+│  • Per-provider retry loop with exponential backoff + jitter    │
+│  • CircuitBreaker per provider (CLOSED → OPEN → HALF_OPEN)      │
+│  • FailoverSelector: Phase 3 scorer over remaining candidates   │
+│  • Preserves original capability constraints during failover     │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 2 — Provider Adapter                                      │
+│  BaseLLMProvider.chat()                                          │
+│  • GeminiProvider / GroqProvider / OllamaProvider               │
+│  • Normalizes request → provider SDK format                     │
+│  • Normalizes response → ChatCompletionResponse                 │
+│  • Normalizes token usage (prompt/completion/total)             │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 6 — Actual Cost Calculation & Reconciliation             │
+│  CostCalculator.calculate_actual_cost()                          │
+│  • Uses provider-returned prompt_tokens + completion_tokens      │
+│  • actual = (prompt/1000 × input_cost_per_1k)                   │
+│           + (completion/1000 × output_cost_per_1k)              │
+│  • Falls back to estimated_cost if usage is None                │
+│                                                                   │
+│  BudgetService.reconcile()                                       │
+│  • reserved -= estimated_cost                                    │
+│  • current_usage += actual_cost                                  │
+│  On provider failure: release_reservation() (no charge)         │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+              ChatCompletionResponse
+         (with cost, budget, rate-limit metadata)
+```
+
+---
+
+## High-Level System Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         Client Browser                            │
+└────────────────────────┬─────────────────────────────────────────┘
                          │ HTTP (port 5173)
                          ▼
-┌──────────────────────────────────────────────────────────────┐
-│              React Frontend (Vite + Tailwind)                 │
-│   Dashboard → StatusCard × 4 (overall, db, redis, version)   │
-│   Polls GET /health every 30s                                 │
-└────────────────────────┬─────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│              React Frontend (Vite + Tailwind)                     │
+│   Dashboard → Live health status with 30s auto-polling            │
+└────────────────────────┬─────────────────────────────────────────┘
                          │ HTTP (port 8000)
                          ▼
-┌──────────────────────────────────────────────────────────────┐
-│                   FastAPI Backend                              │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  ASGI Middleware Stack (applied outer → inner)       │    │
-│  │  1. CORSMiddleware                                   │    │
-│  │  2. RequestIDMiddleware   (X-Request-ID)             │    │
-│  │  3. RequestLoggingMiddleware                         │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  Exception Handlers                                  │    │
-│  │  • RequestValidationError → 422                      │    │
-│  │  • HTTPException → propagated status                 │    │
-│  │  • Exception (catch-all) → 500                       │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  API Router (app/api/v1/endpoints/health.py)         │    │
-│  │  GET /         → RootResponse                        │    │
-│  │  GET /version  → VersionResponse                     │    │
-│  │  GET /health   → HealthResponse (200 or 503)         │    │
-│  └─────────────────────────────────────────────────────┘    │
-└──────┬──────────────────────────────┬───────────────────────┘
-       │                              │
-       ▼                              ▼
-┌─────────────────┐     ┌────────────────────┐
-│   PostgreSQL 16  │     │     Redis 7         │
-│   (asyncpg)      │     │  (redis-py async)   │
-│   port 5432      │     │  port 6379          │
-└─────────────────┘     └────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                   FastAPI Backend                                  │
+│                                                                    │
+│  Auth (P5) → Rate Limit (P6) → Routing (P3) → Budget (P6)        │
+│  → Reliability (P4) → Provider (P2) → Cost Reconcile (P6)        │
+│                                                                    │
+└──────┬──────────────────────┬───────────────────────┬────────────┘
+       │                      │                       │
+       ▼                      ▼                       ▼
+┌─────────────────┐  ┌────────────────────┐  ┌────────────────────┐
+│   PostgreSQL 16  │  │     Redis 7         │  │  LLM Providers     │
+│   (asyncpg)      │  │  (Lua rate limits)  │  │  Gemini / Groq /   │
+│  - organizations │  │  Fixed-window       │  │  Ollama            │
+│  - teams         │  │  counters:          │  └────────────────────┘
+│  - api_keys      │  │  key / team / org   │
+│  - budgets       │  └────────────────────┘
+└─────────────────┘
 ```
 
 ---
@@ -62,588 +164,315 @@ Compose stack — with no LLM business logic yet.
 
 ```
 backend/app/
+│
 ├── config/
 │   └── settings.py          Pydantic Settings v2
 │                            - Loads from .env / environment variables
-│                            - Auto-composes DATABASE_URL and REDIS_URL
 │                            - Single lru_cache singleton
+│                            - Phase 6: rate limit + budget + Ollama pricing vars
 │
 ├── core/
 │   └── logging.py           Loguru structured logging
-│                            - Single stderr sink
-│                            - Level from LOG_LEVEL env var
-│                            - No stack traces, no secrets
+│                            - Single stderr sink, no stack traces
 │
 ├── database/
-│   └── session.py           SQLAlchemy 2.x async engine
-│                            - init_db() / close_db() lifecycle
-│                            - async_sessionmaker
-│                            - check_db_health() → "connected"|"disconnected"
+│   ├── base.py              Shared DeclarativeBase
+│   └── session.py           SQLAlchemy 2.x async engine + get_db_dependency
 │
 ├── utils/
 │   └── redis_client.py      Async Redis client
 │                            - init_redis() / close_redis() lifecycle
-│                            - check_redis_health() → "connected"|"disconnected"
+│                            - Shared by rate limiter and health checks
 │
 ├── middleware/
-│   ├── request_id.py        X-Request-ID propagation
-│   │                        - Reads or generates UUID v4
-│   │                        - Stores in ContextVar
-│   │                        - Adds to response header
-│   │
-│   └── logging.py           Request/response logging
-│                            - method, path, status, duration, client_ip
-│                            - Uses request_id from ContextVar
+│   ├── request_id.py        X-Request-ID propagation (ContextVar)
+│   └── logging.py           Request/response structured log line
 │
 ├── schemas/
-│   └── responses.py         Shared Pydantic v2 response models
-│                            - RootResponse, VersionResponse, HealthResponse
-│                            - ErrorDetail, ErrorResponse
+│   ├── responses.py         Shared Pydantic v2 response models
+│   └── chat.py              ChatCompletionRequest, ChatCompletionResponse
+│                            ResponseMetadata (incl. Phase 6 cost/budget fields)
+│
+├── auth/                    Phase 5 — Authentication & Multi-Tenancy
+│   ├── dependencies.py      get_request_context, require_admin (FastAPI deps)
+│   ├── exceptions.py        AuthenticationError (401), AuthorizationError (403)
+│   ├── models.py            Organization, Team, APIKey ORM models
+│   ├── schemas.py           Pydantic schemas + RequestContext dataclass
+│   ├── security.py          CSPRNG keygen, HMAC-SHA256, compare_digest
+│   └── service.py           AuthService.authenticate() — DB lookup + verify
+│
+├── rate_limit/              Phase 6 — Rate Limiting
+│   ├── limiter.py           RateLimiter
+│   │                        - Fixed-window via Redis Lua script
+│   │                        - Atomic INCR + EXPIREAT in single round-trip
+│   │                        - Checks 3 scopes: api_key, team, org
+│   │                        - Fail-open when Redis is unavailable
+│   └── models.py            RateLimitResult, RateLimitOutcome dataclasses
+│
+├── budget/                  Phase 6 — Budget Management
+│   ├── cost.py              CostCalculator
+│   │                        - estimate_cost(): chars/4 → tokens × pricing × 1.5×
+│   │                        - calculate_actual_cost(): real tokens × split pricing
+│   │                        - Fallback to estimate if usage is None
+│   ├── exceptions.py        RateLimitExceeded (429), BudgetExceeded (402)
+│   ├── models.py            Budget ORM
+│   │                        - reserved column for concurrent pre-reservation
+│   │                        - period_start/period_end for lazy rollover
+│   │                        - policy: BLOCK | WARN | DOWNGRADE
+│   ├── schemas.py           BudgetCreate, BudgetUpdate, BudgetResponse
+│   └── service.py           BudgetService
+│                            - check_and_reserve(): SELECT FOR UPDATE
+│                            - _apply_rollover_if_needed(): inside lock
+│                            - reconcile(): release reservation + charge actual
+│                            - release_reservation(): no charge on failure
+│
+├── providers/               Phase 2 — Provider Adapters
+│   ├── base.py              BaseLLMProvider ABC
+│   ├── registry.py          ProviderRegistry singleton + get_registry() dep
+│   ├── exceptions.py        Typed exception hierarchy (8 types)
+│   ├── gemini_provider.py   Google Gemini adapter
+│   ├── groq_provider.py     Groq adapter (OpenAI-compatible)
+│   └── ollama_provider.py   Ollama local adapter
+│
+├── routing/                 Phase 3 — Intelligent Routing Engine
+│   ├── router.py            RoutingEngine.route() — mode resolution + orchestration
+│   ├── candidates.py        CandidateBuilder — live candidate discovery
+│   ├── scorer.py            CandidateScorer — normalized weighted scoring
+│   │                        Factors: health, success_rate, latency, cost
+│   ├── stats.py             ProviderStatsTracker — rolling success rate + EMA latency
+│   ├── metadata.py          ModelMetadataCatalog
+│   │                        - cost_per_1k_tokens (Phase 3 scoring)
+│   │                        - input_cost_per_1k / output_cost_per_1k (Phase 6 billing)
+│   ├── policies.py          RoutingPolicyRegistry — per-mode weight presets
+│   ├── models.py            ModelMetadata, RoutingCandidate, RoutingDecision
+│   └── exceptions.py        Routing-specific exceptions
+│
+├── reliability/             Phase 4 — Reliability & Resilience
+│   ├── executor.py          ReliabilityExecutor.execute()
+│   │                        - Deadline enforcement
+│   │                        - Retry loop with per-provider circuit breaker
+│   │                        - Failover to next-best candidate on exhaustion
+│   ├── circuit_breaker.py   CircuitBreaker (CLOSED / OPEN / HALF_OPEN)
+│   │                        - Async lock protection on state transitions
+│   ├── retry.py             ExponentialBackoffPolicy
+│   ├── failover.py          FailoverSelector (Phase 3 scorer, loop prevention)
+│   ├── errors.py            Transient vs. permanent failure classification
+│   └── models.py            ReliabilityContext, AttemptRecord
+│
+├── services/
+│   └── chat_service.py      ChatService.complete()
+│                            Full Phase 1–6 orchestration:
+│                            Rate limit → Budget reserve → Routing →
+│                            Reliability → Provider → Cost calc → Reconcile
+│
+├── api/v1/endpoints/
+│   ├── health.py            GET / /version /health
+│   ├── chat.py              POST /api/v1/chat/completions
+│   │                        Injects: auth, rate_limiter, budget_service, cost_calculator
+│   ├── providers.py         GET /api/v1/providers/*
+│   ├── bootstrap.py         POST /api/v1/bootstrap (Phase 5)
+│   ├── organizations.py     Org CRUD (Phase 5, admin)
+│   ├── teams.py             Team CRUD (Phase 5, admin)
+│   ├── api_keys.py          Key lifecycle (Phase 5, admin)
+│   └── budget.py            Budget CRUD (Phase 6, admin)
+│                            POST/GET/PATCH/DELETE /api/v1/teams/{team_id}/budget
 │
 ├── exceptions.py            Global exception handlers
-│                            - Consistent {"error": {...}} envelope
-│                            - 3 handlers: validation, http, catch-all
+│                            - 422 RequestValidationError
+│                            - 401 AuthenticationError
+│                            - 403 AuthorizationError
+│                            - 429 RateLimitExceeded + Retry-After header
+│                            - 402 BudgetExceeded
+│                            - Provider exceptions → correct HTTP status
+│                            - 500 catch-all (no internal details exposed)
 │
-└── main.py                  FastAPI application factory
-                             - lifespan context manager
-                             - CORS, middleware, routers, exception handlers
+└── main.py                  FastAPI app + lifespan
+                             - Provider registry initialization
+                             - DB + Redis lifecycle (init/close)
+                             - Exception handler registration
+                             - Router inclusion (all phases)
 ```
 
 ---
 
-## PostgreSQL Connection Flow
+## Data Model
 
 ```
-Application startup (lifespan)
-    │
+organizations
+  id (PK)
+  name, slug
+  created_at
+
+    │  1:N
     ▼
-init_db()
-    │
-    ├── create_async_engine(DATABASE_URL, pool_pre_ping=True)
-    │
-    └── async_sessionmaker(engine)
 
-GET /health request
-    │
-    ▼
-check_db_health()
-    │
-    ├── engine.connect()
-    │       │
-    │       └── SELECT 1
-    │               │
-    │       ┌───────┴──────┐
-    │       ▼              ▼
-    │  "connected"   Exception caught
-    │                      │
-    │               "disconnected"
-    │                      │
-    └───────────────────────
-    ▼
-Return status string (never raises)
+teams
+  id (PK)
+  organization_id (FK → organizations.id, CASCADE)
+  name, slug
+  created_at
 
-Application shutdown (lifespan)
-    │
-    └── close_db() → engine.dispose()
+    │  1:N                           │  1:1 (unique)
+    ▼                                ▼
+
+api_keys                          budgets
+  id (PK)                           id (PK)
+  team_id (FK → teams.id)           team_id (FK → teams.id, CASCADE)
+  name                              limit_amount FLOAT
+  key_hash (never exposed)          current_usage FLOAT
+  role (admin | member)             reserved FLOAT   ← in-flight reservation
+  created_at                        period (daily | weekly | monthly)
+  expires_at (nullable)             period_start, period_end
+  revoked_at (nullable)             policy (BLOCK | WARN | DOWNGRADE)
+                                    enabled BOOL
+                                    created_at, updated_at
 ```
 
 ---
 
-## Redis Connection Flow
+## Phase 6 Redis Key Schema
 
 ```
-Application startup (lifespan)
-    │
-    ▼
-init_redis()
-    │
-    └── aioredis.from_url(REDIS_URL)
+Rate Limiting (fixed-window counters):
 
-GET /health request
-    │
-    ▼
-check_redis_health()
-    │
-    ├── redis_client.ping()
-    │       │
-    │   ┌───┴───┐
-    │   ▼       ▼
-    │  True  Exception caught
-    │   │        │
-    │ "connected" "disconnected"
-    │   │        │
-    └───┴────────┘
-    ▼
-Return status string (never raises)
+  ratelimit:key:<api_key_id>:<window_start>   TTL = window_seconds
+  ratelimit:team:<team_id>:<window_start>      TTL = window_seconds
+  ratelimit:org:<org_id>:<window_start>        TTL = window_seconds
 
-Application shutdown (lifespan)
-    │
-    └── close_redis() → redis_client.aclose()
+  window_start = floor(time.time() / window_seconds) * window_seconds
+  → All windows are epoch-aligned; counters auto-expire via Redis TTL.
+  → Lua script: INCR + EXPIRE (on count==1) in a single atomic operation.
+  → No separate scheduler or cleanup needed.
 ```
 
 ---
 
-## Request ID Flow
+## Phase 6 Budget Concurrency Model
 
 ```
-Incoming request
-    │
-    ▼
-RequestIDMiddleware.dispatch()
-    │
-    ├── Read X-Request-ID header
-    │       │
-    │   Present?
-    │   ├── Yes → use provided ID
-    │   └── No  → generate UUID v4
-    │
-    ├── _request_id_ctx.set(request_id)   ← ContextVar (per-task)
-    │
-    ├── await call_next(request)           ← route handler runs
-    │       │
-    │       └── (any code can call get_request_id() here)
-    │
-    └── response.headers["X-Request-ID"] = request_id
-                │
-                ▼
-            Client receives X-Request-ID in response
-```
+Concurrent request scenario (both try to spend $4 from $5 remaining):
 
----
-
-## Health Check Flow
-
-```
-GET /health
-    │
-    ▼
-asyncio.gather(
-    check_db_health(),      ─┐
-    check_redis_health()    ─┤  run concurrently
-)                            │
-    │                        │
-    ▼                        │
-Both results collected  ─────┘
-    │
-    ├── db="connected", redis="connected"
-    │       → status="healthy", HTTP 200
-    │
-    └── any "disconnected"
-            → status="degraded", HTTP 503
-    │
-    ▼
-JSONResponse(HealthResponse)
-```
-
----
-
-## Error Handling Flow
-
-```
-Exception raised anywhere in route handler
-    │
-    ▼
-FastAPI exception handler dispatch
-    │
-    ├── RequestValidationError
-    │       → 422 + {"error": {"code": "VALIDATION_ERROR", ...}}
-    │
-    ├── HTTPException
-    │       → (status code) + {"error": {"code": "NOT_FOUND", ...}}
-    │
-    └── Exception (catch-all)
-            → 500 + {"error": {"code": "INTERNAL_SERVER_ERROR", ...}}
-            → exception logged internally (Loguru)
-            → NO stack trace in response
-            → NO internal details in response
-```
-
----
-
-## Frontend Architecture
-
-```
-src/
-├── api/
-│   └── health.ts            Type-safe fetch wrappers
-│                            fetchHealth() → HealthData
-│                            fetchRoot()   → RootData
-│
-├── components/
-│   ├── Layout.tsx           Dark glass sidebar + sticky top bar
-│   └── StatusCard.tsx       Reusable card with variant-driven
-│                            color/animation (healthy/degraded/loading)
-│
-├── pages/
-│   └── Dashboard.tsx        Polls GET /health every 30s
-│                            4 status cards + API quick links
-│                            Loading / error states
-│
-├── App.tsx                  BrowserRouter + Routes
-└── main.tsx                 React 18 createRoot
-```
-
----
-
-## Key Technology Choices
-
-| Layer | Technology | Rationale |
-|-------|-----------|-----------|
-| Backend framework | FastAPI 0.115 | Async-native, Pydantic v2, built-in OpenAPI |
-| DB driver | asyncpg | Fastest PostgreSQL async driver for Python |
-| ORM | SQLAlchemy 2.x | Async session support, mature ecosystem |
-| Redis client | redis-py async | Official async client, simple API |
-| Settings | pydantic-settings | Type-safe env loading, auto-compose URLs |
-| Logging | Loguru | Structured, async-safe, zero boilerplate |
-| Frontend | React 18 + Vite + Tailwind | Fast HMR, utility CSS, strong TS support |
-| Containers | Docker Compose v2 | Local orchestration with health checks |
-
----
-
-## Environment Variables Reference
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APP_NAME` | `Cortex Gateway` | Application display name |
-| `APP_VERSION` | `1.0.0` | Semantic version |
-| `ENVIRONMENT` | `development` | Runtime environment |
-| `DEBUG` | `false` | Enable debug mode (SQL logging) |
-| `API_HOST` | `0.0.0.0` | Uvicorn bind host |
-| `API_PORT` | `8000` | Uvicorn bind port |
-| `POSTGRES_HOST` | `postgres` | PostgreSQL hostname |
-| `POSTGRES_PORT` | `5432` | PostgreSQL port |
-| `POSTGRES_DB` | `cortex_gateway` | PostgreSQL database name |
-| `POSTGRES_USER` | `cortex_user` | PostgreSQL username |
-| `POSTGRES_PASSWORD` | — | PostgreSQL password (**change this**) |
-| `DATABASE_URL` | _(auto)_ | Override auto-composed URL |
-| `REDIS_HOST` | `redis` | Redis hostname |
-| `REDIS_PORT` | `6379` | Redis port |
-| `REDIS_URL` | _(auto)_ | Override auto-composed URL |
-| `SECRET_KEY` | — | Application secret (**change this**) |
-| `LOG_LEVEL` | `INFO` | Loguru log level |
-| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated CORS origins |
-
----
-
-## Phase 2 — Unified Multi-LLM Gateway
-
-### Request Flow
-
-```
-Client
-   │
-   ▼ POST /api/v1/chat/completions
-RequestIDMiddleware           ← sets ContextVar (UUID v4)
-RequestLoggingMiddleware      ← logs method, path, status
-   │
-   ▼
-ChatCompletionRequest         ← Pydantic v2 validation
-   │
-   ▼
-chat.py (endpoint)            ← ZERO provider logic
-   │ Depends(get_registry)
-   ▼
-ChatService.complete()        ← orchestration only
-   │ registry.get(provider)
-   ▼
-ProviderRegistry              ← O(1) dict lookup
-   │
-   ├── raises InvalidProviderError if not registered
-   │
-   ▼
-BaseLLMProvider.chat(request, request_id)
-   │
-   ├── GeminiProvider      → google-generativeai Cloud SDK
-   ├── GroqProvider        → AsyncGroq Cloud SDK
-   └── OllamaProvider      → httpx.AsyncClient (Local / Self-Hosted REST API)
-               │
-               ▼
-       Provider API
-               │
-               ▼
-   Response normalization    ← inside each adapter
-               │
-               ▼
-   ChatCompletionResponse    ← Cortex schema
-   (identical shape for all providers)
-               │
-               ▼
-   RequestLoggingMiddleware  ← logs latency
-               │
-               ▼
-           Client
-```
-
----
-
-### Provider Abstraction Design
-
-```python
-# All providers implement:
-class BaseLLMProvider(ABC):
-    @property
-    @abstractmethod
-    def name(self) -> str: ...          # canonical name: "gemini", "groq", "ollama"
-
-    @abstractmethod
-    async def chat(request, request_id) -> ChatCompletionResponse: ...
-
-    @abstractmethod
-    async def health_check() -> bool: ...
-
-    @abstractmethod
-    async def list_models() -> list[str]: ...
-```
-
-**Key invariant**: Routes and `ChatService` only ever call `BaseLLMProvider` methods.
-The same `BaseLLMProvider` contract seamlessly supports both cloud-hosted API providers (Gemini, Groq) and local self-hosted runtimes (Ollama).
-
----
-
-### Provider Registry
-
-```
-ProviderRegistry (module-level singleton)
-    ├── _providers: dict[str, BaseLLMProvider]
-    │
-    ├── register(provider)   → dict insert, logged
-    ├── get(name)            → raises InvalidProviderError if absent
-    ├── is_registered(name)  → bool
-    ├── list_providers()     → [ProviderInfo] (no secrets)
-    └── provider_names       → sorted list of names
-
-Initialized in lifespan startup:
-    for each provider:
-        if available (API key present for cloud, or base URL for local):
-            registry.register(Provider(...))
-        else:
-            log "skipped" (graceful — no crash)
-```
-
----
-
-### Response Normalization
-
-Every provider adapter produces the exact same `ChatCompletionResponse`:
-
-```
-ChatCompletionResponse
-├── id               "ctx_" + 12 hex chars
-├── object           "chat.completion"
-├── created          Unix timestamp
-├── provider         "gemini" | "groq" | "ollama"
-├── model            exact model string from provider
-├── choices[]
-│   ├── index        0-based
-│   ├── message
-│   │   ├── role     "assistant"
-│   │   └── content  text content
-│   └── finish_reason  "stop" | "length" | None
-├── usage
-│   ├── prompt_tokens     int | None
-│   ├── completion_tokens int | None
-│   └── total_tokens      int | None
-└── metadata
-    ├── request_id   from ContextVar (X-Request-ID)
-    └── latency_ms   provider request duration in milliseconds
-```
-
-**Token usage is Optional** — never fabricated.
-- **Ollama**: uses `prompt_eval_count` → `prompt_tokens`, `eval_count` → `completion_tokens`.
-- **Gemini**: uses `candidates_token_count` → `completion_tokens`.
-- **Groq**: uses `usage.prompt_tokens`, `usage.completion_tokens`.
-
----
-
-### Error Normalization
-
-```
-ProviderException (base)
-    │
-    ├── InvalidProviderError         code=INVALID_PROVIDER        HTTP 404
-    ├── ProviderDisabledError        code=PROVIDER_DISABLED        HTTP 503
-    ├── InvalidModelError            code=INVALID_MODEL           HTTP 400
-    ├── ProviderTimeoutError         code=PROVIDER_TIMEOUT        HTTP 504
-    ├── ProviderRateLimitError       code=PROVIDER_RATE_LIMITED   HTTP 429
-    ├── ProviderUnavailableError     code=PROVIDER_UNAVAILABLE    HTTP 503
-    ├── ProviderAuthError            code=PROVIDER_AUTHENTICATION_FAILED HTTP 502
-    └── ProviderError                code=PROVIDER_ERROR          HTTP 502
-
-All exceptions caught by:
-    register_exception_handlers(app)
-        └── @app.exception_handler(ProviderException)
-                → _error_response(exc.status_code, exc.code, exc.message, request_id)
-                → {"error": {"code": "...", "message": "...", "request_id": "..."}}
-
-API keys NEVER appear in error messages or logs.
-Provider stack traces NEVER reach the client.
-```
-
----
-
-### How to Add a New Provider (Phase 3+)
-
-1. **Create** `backend/app/providers/{name}_provider.py`
-2. **Implement** `BaseLLMProvider` — all 4 abstract methods
-3. **Translate** provider errors to `ProviderException` subclasses in `_raise_from_status()`
-4. **Add** config to `Settings`: `{name}_api_key` or `{name}_base_url`, `{name}_enabled`, `{name}_available`
-5. **Register** in `main._init_providers()`
-6. **Add** to `app/providers/__init__.py` exports
-7. **Add** tests in `tests/test_providers.py`
-
-**No changes needed in**: routes, ChatService, ProviderRegistry, exception handlers,
-schemas, or any existing provider.
-
----
-
-## Phase 2 Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PROVIDER_TIMEOUT_SECONDS` | `30` | Timeout for all provider HTTP requests |
-| `GEMINI_API_KEY` | — | Google Gemini API key |
-| `GEMINI_ENABLED` | `true` | Enable/disable Gemini |
-| `GROQ_API_KEY` | — | Groq API key |
-| `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | Groq base URL |
-| `GROQ_ENABLED` | `true` | Enable/disable Groq |
-| `OLLAMA_ENABLED` | `true` | Enable/disable Ollama |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL (`http://ollama:11434` in Docker) |
-| `OLLAMA_TIMEOUT_SECONDS` | `60` | Ollama-specific request timeout |
-| `ROUTING_ENABLED` | `true` | Enable/disable intelligent routing |
-| `ROUTING_DEFAULT_MODE` | `auto` | Default routing mode (`auto`, `lowest_cost`, `lowest_latency`, `best_available`, `capability_based`, `manual`) |
-| `ROUTING_HEALTH_WEIGHT` | `0.30` | Health score weight |
-| `ROUTING_SUCCESS_RATE_WEIGHT` | `0.30` | Success rate score weight |
-| `ROUTING_LATENCY_WEIGHT` | `0.20` | Latency score weight |
-| `ROUTING_COST_WEIGHT` | `0.20` | Cost score weight |
-| `ROUTING_OLLAMA_COST_PER_1K` | `0.0` | Default cost per 1k tokens for local Ollama |
-
----
-
-## Phase 3 — Intelligent Routing Engine
-
-### Architecture
-
-```
-Incoming Request (POST /api/v1/chat/completions)
-                     │
-                     ▼
-             ChatService.complete()
-                     │
-      ┌──────────────┴──────────────┐
-      │                             │
-[Manual Mode]                 [Intelligent Routing]
-(provider + concrete model)   (model="auto" or routing_mode set)
-      │                             │
-      │                             ▼
-      │                     CandidateBuilder
-      │             (Discovers models from Registry + Health + Stats + Metadata)
-      │                             │
-      │                             ▼
-      │                     Capability Pre-Filter
-      │             (Discards candidates missing required capabilities)
-      │                             │
-      │                             ▼
-      │                     CandidateScorer
-      │             (Multi-factor scoring: Health, Success Rate, Latency, Cost)
-      │                             │
-      │                             ▼
-      │                     Deterministic Tie-Breaker
-      │             (-score, -healthy, -success_rate, latency, cost, provider, model)
-      │                             │
-      │                             ▼
-      │                     RoutingDecision
-      │                             │
-      └──────────────┬──────────────┘
-                     ▼
-           Target Provider Adapter
-           (gemini / groq / ollama)
-                     │
-                     ▼
-           ProviderStatsTracker (records success/failure + latency)
-                     │
-                     ▼
-          Normalized ChatCompletionResponse
-```
-
-### Policy Weight Matrix
-
-| Routing Mode | Health Weight | Success Rate Weight | Latency Weight | Cost Weight | Primary Objective |
-|---|---|---|---|---|---|
-| `auto` | 0.30 | 0.30 | 0.20 | 0.20 | Balanced multi-factor optimization |
-| `lowest_latency` | 0.15 | 0.15 | 0.60 | 0.10 | Fastest response speed |
-| `lowest_cost` | 0.15 | 0.15 | 0.10 | 0.60 | Cost reduction (prioritizes free Ollama) |
-| `best_available` | 0.40 | 0.40 | 0.10 | 0.10 | Highest reliability and uptime |
-| `capability_based`| 0.30 | 0.30 | 0.20 | 0.20 | Balanced after strict capability filter |
-| `manual` | — | — | — | — | Direct client bypass |
-
----
-
-## Phase 4 — Reliability and Resilience
-
-### Architecture
-
-```
-Request (POST /api/v1/chat/completions)
+  Request A                     Request B
+       │                              │
+       │  SELECT FOR UPDATE           │  SELECT FOR UPDATE (BLOCKED)
+       │  ← acquires row lock →       │
+       │                              │
+       │  current_usage = 1.00        │
+       │  reserved     = 0.00         │
+       │  remaining    = 4.00         │
+       │                              │
+       │  estimated_cost = 4.00       │
+       │  4.00 ≤ 4.00 → OK           │
+       │  reserved = 4.00             │
+       │  COMMIT + release lock       │
+       │                              │  ← lock released
+       │                              │  SELECT FOR UPDATE (acquired)
+       │                              │  remaining = limit - usage - reserved
+       │                              │           = 5 - 1 - 4 = 0.00
+       │                              │  0.00 + 4.00 > 0.00 → REJECT
+       │                              │  → 402 BUDGET_EXCEEDED
+       ▼                              ▼
+  Provider call                  Client error
        │
-       ▼
-ChatService.complete()
-       │
-       ▼
-Phase 3 Routing Engine (Selects Primary Candidate)
-       │
-       ▼
-ReliabilityExecutor.execute()
- ┌─────────────────────────────────────────────────────────────┐
- │ 1. Total Request Deadline Check (timeout: 120s)             │
- │ 2. Circuit Breaker Check (CLOSED / HALF_OPEN / OPEN)        │
- │ 3. If OPEN ──► Fast failover without calling provider       │
- │ 4. Provider Adapter Call (with provider-specific timeout)   │
- │ 5. Execution Outcome:                                       │
- │    ├── SUCCESS:                                             │
- │    │     • Reset / update circuit state                     │
- │    │     • Update Phase 3 runtime statistics                │
- │    │     • Attach reliability metadata to response          │
- │    │     • Return ChatCompletionResponse                    │
- │    │                                                        │
- │    └── TRANSIENT FAILURE (Timeout / 5xx / Network drop):    │
- │          • If attempt < max_retries & deadline not exceeded:│
- │          │     • Compute exponential backoff + jitter       │
- │          │     • Async non-blocking sleep & retry provider  │
- │          │                                                  │
- │          • If retries exhausted:                            │
- │                • Trip Circuit Breaker failure counter       │
- │                • If threshold reached ──► Transition to OPEN│
- │                • If failover enabled:                       │
- │                │     • Exclude attempted providers          │
- │                │     • Phase 3 Scorer selects next best     │
- │                │     • Execute fallback candidate           │
- │                │                                            │
- │                • Else: Re-raise normalized error            │
- └─────────────────────────────────────────────────────────────┘
+  actual = 3.50
+  reserved -= 4.00  (→ 0)
+  usage    += 3.50  (→ 4.50)
+  COMMIT
 ```
 
-### Circuit Breaker States
+---
 
-- **CLOSED**: Normal operation. All requests pass through. Transient failures increment the counter.
-- **OPEN**: Provider marked down. Calls short-circuit immediately without network calls or retries.
-- **HALF_OPEN**: Cooldown period (30s) expired. Allows limited test trials. Success resets to CLOSED; failure immediately re-opens circuit.
+## Phase 6 Cost Pricing Model
 
-### Reliability Configuration Variables
+```
+ModelMetadata (app/routing/models.py):
+  cost_per_1k_tokens   → used by Phase 3 routing scorer (blended)
+  input_cost_per_1k    → used by Phase 6 CostCalculator (accurate billing)
+  output_cost_per_1k   → used by Phase 6 CostCalculator (accurate billing)
 
-| Variable | Default | Description |
-|---|---|---|
-| `GEMINI_TIMEOUT_SECONDS` | `30` | Google Gemini request timeout |
-| `GROQ_TIMEOUT_SECONDS` | `30` | Groq request timeout |
-| `OLLAMA_TIMEOUT_SECONDS` | `60` | Ollama local request timeout |
-| `RELIABILITY_TOTAL_REQUEST_TIMEOUT_SECONDS` | `120` | Max duration across all attempts and failovers |
-| `RELIABILITY_MAX_RETRIES` | `2` | Max retries per candidate (1 initial + 2 retries = 3 attempts) |
-| `RELIABILITY_RETRY_BASE_DELAY_SECONDS` | `0.25` | Base backoff delay |
-| `RELIABILITY_RETRY_MAX_DELAY_SECONDS` | `2.0` | Max backoff delay ceiling |
-| `RELIABILITY_RETRY_JITTER` | `true` | Adds randomized jitter to backoff |
-| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Consecutive failures before tripping to OPEN |
-| `CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `30.0` | Seconds to remain OPEN before transitioning to HALF_OPEN |
-| `CIRCUIT_BREAKER_HALF_OPEN_TRIALS` | `1` | Number of probe trials permitted in HALF_OPEN state |
-| `RELIABILITY_MAX_FAILOVER_ATTEMPTS` | `2` | Max number of alternative providers to attempt |
+Pricing catalog (app/routing/metadata.py) — source prices:
+  gemini-1.5-flash:   $0.000075 / 1K input   $0.000300 / 1K output
+  gemini-1.5-pro:     $0.001250 / 1K input   $0.005000 / 1K output
+  gemini-2.0-flash:   $0.000100 / 1K input   $0.000400 / 1K output
+  llama-3.3-70b:      $0.000590 / 1K input   $0.000790 / 1K output (Groq)
+  llama-3.1-8b:       $0.000050 / 1K input   $0.000080 / 1K output (Groq)
+  ollama/*:           $0.000000 / 1K input   $0.000000 / 1K output (configurable)
 
+Estimation formula:
+  input_tokens  = len(messages_content) / 4  (1 token ≈ 4 chars)
+  output_tokens = request.max_tokens or 500   (default estimate)
+  estimate      = (input/1000 × input_price + output/1000 × output_price) × 1.5
 
+Actual formula (post-execution):
+  actual = (prompt_tokens/1000 × input_price)
+         + (completion_tokens/1000 × output_price)
+  Fallback: if usage is None → use estimate (never silently zero)
+```
 
+---
+
+## Security Design
+
+### Authentication (Phase 5)
+- **Key format:** `cxg_<32-byte-urlsafe-base64>` (CSPRNG, 256-bit entropy)
+- **Storage:** HMAC-SHA256(pepper + key), never plaintext
+- **Verification:** `hmac.compare_digest` (constant-time, timing-attack resistant)
+- **Pepper:** Server-side secret injected from env, rotatable
+- **Lifecycle:** Keys shown plaintext exactly once at creation
+- **Revocation:** Soft-delete (`revoked_at`) — preserved for audit, rejected on auth
+
+### Authorization (Phase 5)
+- **Roles:** `admin` (full access) and `member` (chat only)
+- **Enforcement:** `require_admin` FastAPI dependency — server-side, not client-controlled
+- **Cross-tenant isolation:** All team/org lookups validate `organization_id` matches authenticated context
+- **No client trust:** `team_id`, `org_id`, `role` always come from `RequestContext`, never from request body
+
+### Rate Limiting (Phase 6)
+- **Ownership:** Limiter always uses `context.api_key_id`, `context.team_id`, `context.organization_id`
+- **No client override:** Rate limit identifiers are never taken from the request body
+- **Fail-open:** Redis unavailability → allow traffic (prevent total outage), log warning
+- **Hierarchy:** Key ∩ Team ∩ Org — all three must pass
+
+### Budget (Phase 6)
+- **No client override:** `team_id` always taken from authenticated `RequestContext`
+- **Admin-only management:** Budget CRUD requires `role=admin`
+- **Cross-org blocked:** `_resolve_team()` validates `team_id` belongs to authenticated `organization_id`
+- **Reserved field never exposed:** Only `remaining_amount` (derived) returned in API responses
+- **Provider failure = no charge:** `release_reservation()` called on exception, no phantom billing
+
+---
+
+## Alembic Migration History
+
+| Revision | Description | Tables |
+|----------|-------------|--------|
+| `0001` | Phase 5 Auth | `organizations`, `teams`, `api_keys` |
+| `0002` | Phase 6 Budgets | `budgets` |
+
+Run migrations:
+```bash
+cd backend
+alembic upgrade head
+```
+
+---
+
+## Test Architecture
+
+```
+tests/
+├── conftest.py                  Session-scoped TestClient; patches init_db/init_redis
+├── test_endpoints.py            Phase 1: health, root, version
+├── test_providers.py            Phase 2: provider unit tests (mocked HTTP)
+├── test_chat_api.py             Phase 2–6: chat endpoint integration tests
+│                                Phase 6 deps overridden with no-ops in fixture
+├── test_routing.py              Phase 3: candidate scoring, mode resolution
+├── test_reliability.py          Phase 4: circuit breaker, retry, failover
+├── test_auth_security.py        Phase 5: key generation, HMAC, constant-time compare
+├── test_auth_lifecycle.py       Phase 5: create/list/revoke + RBAC
+├── test_auth_security_leakage.py Phase 5: key_hash never in response
+├── test_rate_limiting.py        Phase 6: Lua mock, all 3 scopes, ownership
+└── test_budget.py               Phase 6: cost calc, BLOCK/WARN rollover, reconcile
+
+Total: 238 tests — 0 failures — no real API credentials needed
+```
