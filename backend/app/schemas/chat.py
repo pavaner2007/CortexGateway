@@ -189,6 +189,32 @@ class ResponseMetadata(BaseModel):
         None,
         description="Circuit breaker state of selected provider.",
     )
+    # ── Phase 6: Cost & Budget metadata ──────────────────────────────────────
+    estimated_cost: Optional[float] = Field(
+        None,
+        description="Estimated USD cost for this request (pre-execution).",
+    )
+    actual_cost: Optional[float] = Field(
+        None,
+        description="Actual USD cost calculated from provider token usage.",
+    )
+    remaining_budget: Optional[float] = Field(
+        None,
+        description="Remaining team budget after this request (only exposed when BUDGET_EXPOSE_REMAINING=true).",
+    )
+    budget_warning: bool = Field(
+        False,
+        description="True if budget threshold was crossed (WARN policy).",
+    )
+    budget_downgraded: bool = Field(
+        False,
+        description="True if request was downgraded to a cheaper provider/model due to budget constraints.",
+    )
+    # ── Phase 6: Rate limit metadata ─────────────────────────────────────────
+    rate_limit_remaining: Optional[int] = Field(
+        None,
+        description="Remaining requests in the tightest-bound rate-limit window.",
+    )
 
 
 class ChatCompletionResponse(BaseModel):

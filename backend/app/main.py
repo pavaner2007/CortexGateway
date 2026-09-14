@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.endpoints.api_keys import router as api_keys_router
 from app.api.v1.endpoints.bootstrap import router as bootstrap_router
+from app.api.v1.endpoints.budget import router as budget_router
 from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.health import router as system_router
 from app.api.v1.endpoints.organizations import router as organizations_router
@@ -182,6 +183,9 @@ def create_application() -> FastAPI:
     application.include_router(organizations_router, prefix="/api/v1")
     application.include_router(teams_router, prefix="/api/v1")
     application.include_router(api_keys_router, prefix="/api/v1")
+
+    # Phase 6 — rate limiting + budget management
+    application.include_router(budget_router, prefix="/api/v1")
 
     return application
 

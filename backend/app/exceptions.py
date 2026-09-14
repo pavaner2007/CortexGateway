@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.auth.exceptions import AuthenticationError, AuthorizationError
+from app.budget.exceptions import BudgetExceeded, RateLimitExceeded
 from app.core.logging import logger
 from app.middleware.request_id import get_request_id
 from app.providers.exceptions import ProviderException
@@ -156,6 +157,46 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         return _error_response(
             status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_exceeded_handler(
+        request: Request, exc: RateLimitExceeded
+    ) -> JSONResponse:
+        request_id = get_request_id()
+        logger.warning(
+            "Rate limit exceeded",
+            request_id=request_id,
+            path=str(request.url.path),
+            scope=exc.scope,
+            retry_after=exc.retry_after_seconds,
+        )
+        response = _error_response(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            code=exc.code,
+            message=exc.message,
+            request_id=request_id,
+        )
+        response.headers["Retry-After"] = str(exc.retry_after_seconds)
+        return response
+
+    @app.exception_handler(BudgetExceeded)
+    async def budget_exceeded_handler(
+        request: Request, exc: BudgetExceeded
+    ) -> JSONResponse:
+        request_id = get_request_id()
+        logger.warning(
+            "Budget exceeded",
+            request_id=request_id,
+            path=str(request.url.path),
+            team_id=exc.team_id,
+            remaining=exc.remaining,
+        )
+        return _error_response(
+            status_code=402,
             code=exc.code,
             message=exc.message,
             request_id=request_id,

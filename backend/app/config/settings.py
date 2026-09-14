@@ -124,6 +124,38 @@ class Settings(BaseSettings):
     # NEVER log, commit, or return this value.
     cortex_bootstrap_token: str = "change-me-in-production"
 
+    # ── Rate Limiting (Phase 6) ────────────────────────────────────────────────
+    # Fixed-window counters backed by Redis. Set RATE_LIMIT_ENABLED=false to disable.
+    rate_limit_enabled: bool = True
+
+    # Per API key limits
+    rate_limit_api_key_requests: int = 100        # max requests per window
+    rate_limit_api_key_window_seconds: int = 60   # window duration in seconds
+
+    # Per team limits
+    rate_limit_team_requests: int = 500
+    rate_limit_team_window_seconds: int = 60
+
+    # Per organization limits
+    rate_limit_org_requests: int = 2000
+    rate_limit_org_window_seconds: int = 60
+
+    # ── Budget Management (Phase 6) ────────────────────────────────────────────
+    budget_enabled: bool = True
+    # Default policy when a budget has no explicit policy set.
+    # BLOCK | WARN | DOWNGRADE
+    budget_default_policy: str = "BLOCK"
+    # Emit structured warning log when usage reaches this % of limit.
+    budget_warning_threshold_percent: int = 80
+    # Expose remaining budget in response metadata (default: false for privacy).
+    budget_expose_remaining: bool = False
+
+    # ── Ollama Split Pricing (Phase 6) ─────────────────────────────────────────
+    # Default 0.00 = no direct per-token charge for local/self-hosted Ollama.
+    # Override in production if hosting cost should be accounted for.
+    ollama_cost_per_1k_input_tokens: float = 0.00
+    ollama_cost_per_1k_output_tokens: float = 0.00
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: object) -> object:

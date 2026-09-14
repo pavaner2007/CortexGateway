@@ -109,6 +109,32 @@ def _mock_get_request_context() -> RequestContext:
 @pytest.fixture(scope="module")
 def client() -> TestClient:
     """Session-scoped test client with mocked infrastructure, providers, and auth."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from app.api.v1.endpoints.chat import (
+        _get_rate_limiter,
+        _get_budget_service,
+        _get_cost_calculator,
+    )
+    from app.rate_limit.limiter import RateLimiter
+    from app.budget.service import BudgetService
+    from app.budget.cost import CostCalculator
+    from app.routing.metadata import ModelMetadataCatalog
+
+    # Phase 6 no-op overrides: disabled limiter, disabled budget, zero-cost calculator
+    def _noop_rate_limiter():
+        return RateLimiter(redis=None)  # always allows
+
+    def _noop_budget_service():
+        svc = _AsyncMock(spec=BudgetService)
+        svc.get_budget = _AsyncMock(return_value=None)  # no budget configured
+        svc.check_and_reserve = _AsyncMock(return_value=(None, False))
+        svc.reconcile = _AsyncMock(return_value=None)
+        svc.release_reservation = _AsyncMock(return_value=None)
+        return svc
+
+    def _noop_cost_calculator():
+        return CostCalculator(catalog=ModelMetadataCatalog())
+
     mock_registry = _make_mock_registry()
     with (
         patch("app.main.init_db"),
@@ -121,6 +147,10 @@ def client() -> TestClient:
         app.dependency_overrides[get_registry] = lambda: mock_registry
         # Override auth dependency so existing chat tests bypass real API-key auth
         app.dependency_overrides[get_request_context] = _mock_get_request_context
+        # Override Phase 6 dependencies (no-op for existing tests)
+        app.dependency_overrides[_get_rate_limiter] = _noop_rate_limiter
+        app.dependency_overrides[_get_budget_service] = _noop_budget_service
+        app.dependency_overrides[_get_cost_calculator] = _noop_cost_calculator
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c
         app.dependency_overrides.clear()

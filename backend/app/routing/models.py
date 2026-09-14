@@ -27,7 +27,18 @@ class ModelMetadata(BaseModel):
     cost_per_1k_tokens: float = Field(
         default=0.0,
         ge=0.0,
-        description="Cost in USD per 1,000 tokens (blended prompt/completion).",
+        description="Cost in USD per 1,000 tokens (blended prompt/completion). Used by Phase 3 routing scorer.",
+    )
+    # Phase 6 — split input/output pricing for accurate cost accounting
+    input_cost_per_1k: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Cost in USD per 1,000 input (prompt) tokens.",
+    )
+    output_cost_per_1k: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Cost in USD per 1,000 output (completion) tokens.",
     )
     capabilities: List[str] = Field(
         default_factory=lambda: ["text"],
