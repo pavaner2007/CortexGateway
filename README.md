@@ -57,10 +57,11 @@ Your Application
 | **Cache / Rate Limiting** | Redis 7 · redis-py async · Lua atomic scripts |
 | **Config** | Pydantic Settings v2 |
 | **Logging** | Loguru |
+| **Observability** | Prometheus Client · OpenTelemetry (API/SDK/OTLP) |
 | **Frontend** | React 18 · TypeScript · Vite · Tailwind CSS |
 | **Routing** | React Router v6 |
 | **Testing** | pytest · pytest-asyncio · httpx · respx |
-| **Containers** | Docker · Docker Compose · Ollama |
+| **Containers** | Docker · Docker Compose · Ollama · Prometheus · Grafana |
 
 ---
 
@@ -143,7 +144,28 @@ Your Application
 - **Budget Reconciliation** — reservation released + actual cost charged after every request; reservation released without charge on provider failure
 - **Budget Management API** — `POST/GET/PATCH/DELETE /api/v1/teams/{team_id}/budget` (admin only)
 - **Cost & Budget Metadata** — response carries `estimated_cost`, `actual_cost`, `remaining_budget` (optional), `budget_warning`, `budget_downgraded`, `rate_limit_remaining`
-- **256 automated tests** — 100% passing; zero real API credits required
+
+### Observability & Analytics ✅
+- **Persistent Request Log** — every request writes one `RequestLog` row to PostgreSQL via a background task using its **own dedicated session**; observability failures are non-fatal and never affect the chat response
+- **9 Prometheus Metrics** — counters and histograms at `GET /metrics` in standard text exposition format, ready for Prometheus scraping:
+  - `gateway_requests_total` (provider, model, status)
+  - `gateway_request_latency_seconds` (provider, model)
+  - `provider_requests_total` / `provider_errors_total` / `provider_latency_seconds`
+  - `fallback_requests_total` (from_provider → to_provider)
+  - `circuit_breaker_state` (per provider gauge)
+  - `budget_downgrade_total` · `rate_limit_exceeded_total` (scope)
+  - **Zero high-cardinality labels** — `team_id`, `org_id`, `request_id`, `api_key_id` never appear as Prometheus labels
+- **OpenTelemetry Tracing** — opt-in distributed tracing via OTLP gRPC; disabled by default (`OTEL_ENABLED=false`); gateway operates normally without a collector; `safe_span()` context manager ensures tracing errors are never raised to callers
+- **Analytics REST API** — 7 admin-only endpoints, org-scoped server-side:
+  - `GET /api/v1/analytics/requests` — paginated request log (max 200/page)
+  - `GET /api/v1/analytics/costs` — cost breakdown by provider / model / team
+  - `GET /api/v1/analytics/latency` — avg / p50 / p95 / p99 latency per provider
+  - `GET /api/v1/analytics/errors` — error counts by provider + error_code
+  - `GET /api/v1/analytics/fallbacks` — failover counts by from→to provider
+  - `GET /api/v1/analytics/budget-events` — BLOCK / WARN / DOWNGRADE event counts
+  - `GET /api/v1/analytics/timeseries` — time-bucketed request/cost/error (hour/day/week)
+- **Prometheus + Grafana** — included in Docker Compose; Prometheus scrapes `/metrics` every 15 s; Grafana at port 3000 for dashboard creation
+- **288 automated tests** — 288/288 passing; zero real API credits required
 
 ---
 
@@ -180,6 +202,9 @@ That's it. All services start automatically.
 | Swagger UI | http://localhost:8000/docs |
 | ReDoc | http://localhost:8000/redoc |
 | Health Check | http://localhost:8000/health |
+| Prometheus Metrics | http://localhost:8000/metrics |
+| Prometheus UI | http://localhost:9090 |
+| Grafana | http://localhost:3000 _(admin / admin)_ |
 
 ---
 
@@ -224,7 +249,7 @@ pytest tests/ -v
 ```
 
 ```
-256 passed in 4.09s
+288 passed in 4.40s
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -334,6 +359,16 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | `BUDGET_EXPOSE_REMAINING` | `false` | Include `remaining_budget` in response metadata |
 | `OLLAMA_COST_PER_1K_INPUT_TOKENS` | `0.00` | Ollama input token cost (override for cost accounting) |
 | `OLLAMA_COST_PER_1K_OUTPUT_TOKENS` | `0.00` | Ollama output token cost |
+
+### Observability Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `METRICS_ENABLED` | `true` | Expose `GET /metrics` in Prometheus text format |
+| `OTEL_ENABLED` | `false` | Enable OpenTelemetry distributed tracing |
+| `OTEL_SERVICE_NAME` | `cortex-gateway` | Service name reported to the OTel collector |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | gRPC collector endpoint, e.g. `http://otel-collector:4317` |
+| `REQUEST_LOG_ENABLED` | `true` | Persist one `RequestLog` row per request to PostgreSQL |
 
 ---
 
@@ -710,6 +745,12 @@ POST /api/v1/chat/completions
         ▼
     ChatCompletionResponse
     (with cost + budget metadata)
+           │
+        ▼  [Background — non-blocking]
+┌──────────────────────────┐
+│  9. Observability        │  RequestLog row → PostgreSQL (own session)
+└──────────────────────────┘  Prometheus counters incremented
+                              OTel span closed (if enabled)
 ```
 
 ---
@@ -725,19 +766,22 @@ CortexGateway/
 │   │   └── versions/
 │   │       ├── 0001_phase5_auth.py             # organizations, teams, api_keys tables
 │   │       ├── 0002_phase6_budgets.py          # budgets table with reserved column
-│   │       └── 0003_phase6_team_rate_limits.py # per-team rate limit overrides table
+│   │       ├── 0003_phase6_team_rate_limits.py # per-team rate limit overrides table
+│   │       └── 0004_phase7_request_logs.py     # request_logs table (observability)
 │   ├── alembic.ini                    # Alembic config
 │   ├── app/
 │   │   ├── api/v1/endpoints/
 │   │   │   ├── health.py              # GET /, /version, /health
-│   │   │   ├── chat.py                # POST /api/v1/chat/completions
+│   │   │   ├── chat.py                # POST /api/v1/chat/completions (+ observability)
 │   │   │   ├── providers.py           # GET /api/v1/providers/*
 │   │   │   ├── bootstrap.py           # POST /api/v1/bootstrap
 │   │   │   ├── organizations.py       # Org CRUD (admin only)
 │   │   │   ├── teams.py               # Team CRUD (admin only)
 │   │   │   ├── api_keys.py            # Key lifecycle (admin only)
 │   │   │   ├── budget.py              # Budget CRUD (admin only)
-│   │   │   └── rate_limits.py         # Per-team rate limit overrides (admin only)
+│   │   │   ├── rate_limits.py         # Per-team rate limit overrides (admin only)
+│   │   │   ├── analytics.py           # GET /api/v1/analytics/* (admin only, org-scoped)
+│   │   │   └── metrics.py             # GET /metrics (Prometheus exposition)
 │   │   ├── auth/                      # Auth & Multi-Tenancy
 │   │   │   ├── dependencies.py        # get_request_context, require_admin
 │   │   │   ├── exceptions.py          # AuthenticationError, AuthorizationError
@@ -793,10 +837,17 @@ CortexGateway/
 │   │   │   └── chat.py                # Chat request/response + cost/budget metadata
 │   │   ├── services/
 │   │   │   └── chat_service.py        # ChatService — full request pipeline
+│   │   ├── observability/             # Phase 7 — Observability
+│   │   │   ├── models.py              # RequestLog ORM (23 columns, 10 indexes)
+│   │   │   ├── metrics.py             # 9 Prometheus metrics (zero high-cardinality labels)
+│   │   │   ├── tracing.py             # OTel init + safe_span() context manager
+│   │   │   ├── log_writer.py          # Async background RequestLog writer
+│   │   │   ├── analytics_schemas.py   # Pydantic response schemas (7 analytics endpoints)
+│   │   │   └── analytics_service.py   # PostgreSQL-side aggregations (cost/latency/errors…)
 │   │   ├── utils/
 │   │   │   └── redis_client.py        # Async Redis client
 │   │   ├── exceptions.py              # Global exception handlers (incl. 402, 429)
-│   │   └── main.py                    # FastAPI app + lifespan
+│   │   └── main.py                    # FastAPI app + lifespan + OTel init
 │   ├── tests/
 │   │   ├── conftest.py                    # Fixtures (DB/Redis mocked)
 │   │   ├── test_endpoints.py              # Infrastructure endpoint tests
@@ -809,7 +860,8 @@ CortexGateway/
 │   │   ├── test_auth_security_leakage.py  # Leakage / isolation tests
 │   │   ├── test_rate_limiting.py          # Sliding-window limiter tests (incl. boundary burst regression)
 │   │   ├── test_budget.py                 # Budget + cost tests (incl. DOWNGRADE policy coverage)
-│   │   └── test_team_rate_limits.py       # Per-team rate limit override tests
+│   │   ├── test_team_rate_limits.py       # Per-team rate limit override tests
+│   │   └── test_observability.py          # Observability: metrics, log writer, analytics RBAC, cardinality guard
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
@@ -827,9 +879,12 @@ CortexGateway/
 │   ├── package.json
 │   └── vite.config.ts
 │
+├── observability/
+│   └── prometheus.yml                 # Prometheus scrape config (backend:8000/metrics, 15s)
+│
 ├── docs/
 │   └── architecture.md
-├── docker-compose.yml
+├── docker-compose.yml                 # Includes Prometheus (9090) + Grafana (3000)
 └── README.md
 ```
 
@@ -845,9 +900,8 @@ CortexGateway/
 | 4 | Reliability & Resilience | ✅ **Done** |
 | 5 | Authentication & Multi-Tenancy | ✅ **Done** |
 | 6 | Rate Limiting & Budget Management | ✅ **Done** |
-| 7 | Persistent Usage Analytics | Planned |
-| 8 | Prometheus & OpenTelemetry | Planned |
-| 9 | Admin Dashboard | Planned |
+| 7 | Observability & Analytics | ✅ **Done** |
+| 8 | Admin Dashboard | Planned |
 
 ---
 
