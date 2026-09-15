@@ -1,22 +1,33 @@
 name: cortex-gateway
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cortex Gateway — Docker Compose (Phase 1)
+# Cortex Gateway — Docker Compose
 #
 # Services:
-#   postgres  — PostgreSQL 16 database
-#   redis     — Redis 7 in-memory store
-#   backend   — FastAPI application (Python 3.12)
-#   frontend  — React / Vite dashboard (served via nginx)
+#   postgres    — PostgreSQL 16 database
+#   redis       — Redis 7 in-memory store
+#   backend     — FastAPI application (Python 3.12)
+#   frontend    — React / Vite dashboard (served via nginx)
+#   ollama      — Local LLM runtime
+#   prometheus  — Metrics scraper (Phase 7)
+#   grafana     — Metrics visualisation (Phase 7)
 #
 # Usage:
 #   docker compose up --build
 #
 # Ports (host):
 #   5173  → frontend
-#   8000  → backend  (also: /docs, /redoc)
+#   8000  → backend  (also: /docs, /redoc, /metrics)
 #   5432  → postgres (local tooling)
 #   6379  → redis    (local tooling)
+#   9090  → prometheus
+#   3000  → grafana  (default login: admin / admin)
+#
+# Observability notes:
+#   - Prometheus scrapes GET /metrics on backend:8000 every 15s.
+#   - Grafana ships without pre-built dashboards; add Prometheus datasource
+#     (URL: http://prometheus:9090) after first login.
+#   - Gateway starts and runs normally if prometheus or grafana are down.
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -82,6 +93,11 @@ services:
       LOG_LEVEL: INFO
       CORS_ORIGINS: "http://localhost:5173,http://frontend:5173"
       OLLAMA_BASE_URL: "http://ollama:11434"
+      # Phase 7 — Observability defaults (override in .env for production)
+      OTEL_ENABLED: "false"
+      OTEL_SERVICE_NAME: "cortex-gateway"
+      METRICS_ENABLED: "true"
+      REQUEST_LOG_ENABLED: "true"
     ports:
       - "8000:8000"
     depends_on:
@@ -128,10 +144,47 @@ services:
     depends_on:
       - backend
 
+  # ── Prometheus (Phase 7 — optional, gateway runs without it) ────────────────
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: cortex-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    depends_on:
+      - backend
+
+  # ── Grafana (Phase 7 — optional, gateway runs without it) ───────────────────
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: cortex-grafana
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
     driver: local
   redis_data:
     driver: local
   ollama_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local

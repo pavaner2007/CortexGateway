@@ -12,6 +12,7 @@ Configures:
 
 Phase 2: Provider registry + chat/provider routers
 Phase 5: Bootstrap, organizations, teams, API key routers
+Phase 7: Prometheus metrics endpoint, analytics routers, OTel tracing init
 """
 
 from contextlib import asynccontextmanager
@@ -20,12 +21,14 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.endpoints.analytics import router as analytics_router
 from app.api.v1.endpoints.api_keys import router as api_keys_router
 from app.api.v1.endpoints.bootstrap import router as bootstrap_router
 from app.api.v1.endpoints.budget import router as budget_router
 from app.api.v1.endpoints.rate_limits import router as rate_limits_router
 from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.health import router as system_router
+from app.api.v1.endpoints.metrics import router as metrics_router
 from app.api.v1.endpoints.organizations import router as organizations_router
 from app.api.v1.endpoints.providers import router as providers_router
 from app.api.v1.endpoints.teams import router as teams_router
@@ -101,6 +104,30 @@ def _init_providers() -> None:
     )
 
 
+def _init_tracing() -> None:
+    """
+    Initialize OpenTelemetry tracing.
+
+    When OTEL_ENABLED=false (default): installs no-op tracer.
+    When OTEL_ENABLED=true: installs OTLP gRPC exporter pointed at
+    OTEL_EXPORTER_OTLP_ENDPOINT.
+
+    Gateway works normally when collector is unavailable.
+    """
+    from app.observability.tracing import init_tracing
+
+    init_tracing(
+        enabled=settings.otel_enabled,
+        service_name=settings.otel_service_name,
+        otlp_endpoint=settings.otel_exporter_otlp_endpoint,
+    )
+    logger.info(
+        "OpenTelemetry tracing initialized",
+        enabled=settings.otel_enabled,
+        service=settings.otel_service_name,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
@@ -111,6 +138,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         2. Initialise PostgreSQL connection pool.
         3. Initialise Redis client.
         4. Initialise LLM provider registry.
+        5. Initialise OpenTelemetry tracing (Phase 7).
 
     Shutdown:
         1. Dispose PostgreSQL connection pool.
@@ -128,6 +156,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
     init_redis()
     _init_providers()
+    _init_tracing()
 
     logger.info("Application startup complete")
     yield
@@ -175,6 +204,9 @@ def create_application() -> FastAPI:
     # Public (no auth required)
     application.include_router(system_router)
 
+    # Phase 7 — Prometheus metrics (unauthenticated, standard convention)
+    application.include_router(metrics_router)
+
     # Phase 2 — provider + chat (chat now requires auth)
     application.include_router(chat_router, prefix="/api/v1")
     application.include_router(providers_router, prefix="/api/v1")
@@ -188,6 +220,9 @@ def create_application() -> FastAPI:
     # Phase 6 — rate limiting + budget management
     application.include_router(budget_router, prefix="/api/v1")
     application.include_router(rate_limits_router, prefix="/api/v1")
+
+    # Phase 7 — analytics (admin only, org-scoped)
+    application.include_router(analytics_router, prefix="/api/v1")
 
     return application
 

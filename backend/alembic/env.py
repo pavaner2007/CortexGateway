@@ -24,6 +24,8 @@ from app.database.base import Base
 # Import all ORM models so their tables register with Base.metadata.
 # Alembic will not see tables that are not imported here.
 import app.auth.models  # noqa: F401
+import app.observability.models  # noqa: F401
+
 
 # Alembic Config object provides access to alembic.ini values.
 config = context.config

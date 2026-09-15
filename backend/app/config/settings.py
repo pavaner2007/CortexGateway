@@ -156,6 +156,25 @@ class Settings(BaseSettings):
     ollama_cost_per_1k_input_tokens: float = 0.00
     ollama_cost_per_1k_output_tokens: float = 0.00
 
+    # ── Observability: Prometheus (Phase 7) ────────────────────────────────────
+    # Expose GET /metrics in Prometheus text exposition format.
+    # Disable if you handle metrics at the infrastructure level instead.
+    metrics_enabled: bool = True
+
+    # ── Observability: OpenTelemetry (Phase 7) ────────────────────────────────
+    # Set OTEL_ENABLED=true and point OTEL_EXPORTER_OTLP_ENDPOINT to a
+    # running collector. Gateway works normally when collector is unavailable.
+    otel_enabled: bool = False
+    otel_service_name: str = "cortex-gateway"
+    # gRPC endpoint for the OTLP exporter, e.g. "http://otel-collector:4317"
+    otel_exporter_otlp_endpoint: str = ""
+
+    # ── Observability: Request Log (Phase 7) ──────────────────────────────────
+    # Toggle persistent request log writes to PostgreSQL.
+    # Set to false only for testing / local dev with no DB.
+    request_log_enabled: bool = True
+
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: object) -> object:

@@ -1,5 +1,5 @@
 """
-Cortex Gateway — Chat Completion Endpoint (Phase 2 + Phase 5 + Phase 6).
+Cortex Gateway — Chat Completion Endpoint (Phase 2 + Phase 5 + Phase 6 + Phase 7).
 
 Provides:
     POST /api/v1/chat/completions
@@ -9,11 +9,17 @@ Phase 6: Rate limiting and budget management are injected into ChatService.
          All three Phase 6 dependencies (rate_limiter, budget_service,
          cost_calculator) are injected from FastAPI dependency functions so
          they can be overridden in tests without touching global state.
+Phase 7: Observability layer — strictly non-blocking:
+         - One RequestLog row written via BackgroundTasks (own DB session).
+         - Prometheus counters/histograms incremented.
+         - None of the above can fail the request.
+         - All exceptions from the pipeline are re-raised after logging;
+           the exception handler chain in app/exceptions.py handles the response.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,6 +102,7 @@ def _get_cost_calculator(
 )
 async def chat_completions(
     request: ChatCompletionRequest,
+    background_tasks: BackgroundTasks,
     context: RequestContext = Depends(get_request_context),
     service: ChatService = Depends(_get_chat_service),
     rate_limiter: RateLimiter = Depends(_get_rate_limiter),
@@ -104,19 +111,154 @@ async def chat_completions(
     settings: Settings = Depends(get_settings),
 ) -> ChatCompletionResponse:
     """
-    Unified chat completion endpoint with rate limiting and budget management.
+    Unified chat completion endpoint.
 
-    Pipeline:
-        Auth → Rate Limit → Budget Reserve → Routing → Reliability → Provider
-        → Actual Cost → Budget Reconcile → Response
+    Phase 7 observability is additive and non-blocking:
+    - All exceptions from the pipeline are always re-raised.
+    - Observability logging is registered as BackgroundTasks BEFORE raising.
+    - The exception handler in app/exceptions.py handles the HTTP response.
     """
-    request_id = get_request_id()
-    return await service.complete(
-        request,
-        request_id,
-        context=context,
-        rate_limiter=rate_limiter,
-        budget_service=budget_service,
-        cost_calculator=cost_calculator,
-        settings=settings,
+    from app.budget.exceptions import BudgetExceeded, RateLimitExceeded
+    from app.observability.log_writer import (
+        build_error_log,
+        build_success_log,
+        write_request_log,
     )
+    from app.observability.metrics import (
+        budget_downgrade_total,
+        fallback_requests_total,
+        rate_limit_exceeded_total,
+        record_gateway_request,
+        update_circuit_breaker_state,
+    )
+    from app.observability.tracing import get_current_trace_id
+
+    request_id = get_request_id()
+
+    # ── Run the core pipeline ─────────────────────────────────────────────────
+    # Any exception here is caught, logged (non-blocking), and re-raised.
+    # The exception handler chain produces the final HTTP error response.
+    try:
+        response = await service.complete(
+            request,
+            request_id,
+            context=context,
+            rate_limiter=rate_limiter,
+            budget_service=budget_service,
+            cost_calculator=cost_calculator,
+            settings=settings,
+        )
+
+    except RateLimitExceeded as exc:
+        try:
+            rate_limit_exceeded_total.labels(scope=exc.scope).inc()
+        except Exception:
+            pass
+        if settings.request_log_enabled:
+            try:
+                background_tasks.add_task(
+                    write_request_log,
+                    build_error_log(
+                        request_id=request_id,
+                        context=context,
+                        status="rate_limited",
+                        http_status_code=429,
+                        error_code=exc.code,
+                        trace_id=get_current_trace_id(),
+                    ),
+                )
+            except Exception:
+                pass
+        raise  # → app/exceptions.py rate_limit_exceeded_handler → 429
+
+    except BudgetExceeded as exc:
+        if settings.request_log_enabled:
+            try:
+                background_tasks.add_task(
+                    write_request_log,
+                    build_error_log(
+                        request_id=request_id,
+                        context=context,
+                        status="budget_blocked",
+                        http_status_code=402,
+                        error_code=exc.code,
+                        budget_action="blocked",
+                        trace_id=get_current_trace_id(),
+                    ),
+                )
+            except Exception:
+                pass
+        raise  # → app/exceptions.py budget_exceeded_handler → 402
+
+    except Exception as exc:
+        if settings.request_log_enabled:
+            try:
+                background_tasks.add_task(
+                    write_request_log,
+                    build_error_log(
+                        request_id=request_id,
+                        context=context,
+                        status="failure",
+                        http_status_code=getattr(exc, "status_code", 500),
+                        error_code=getattr(exc, "code", type(exc).__name__),
+                        trace_id=get_current_trace_id(),
+                    ),
+                )
+            except Exception:
+                pass
+        raise  # → app/exceptions.py appropriate handler
+
+    # ── Success path ──────────────────────────────────────────────────────────
+    meta = response.metadata
+
+    # Resolve budget policy for RequestLog (best-effort; failure is silent)
+    budget_policy: str | None = None
+    try:
+        bp = await budget_service.get_budget(context.team_id)
+        if bp:
+            budget_policy = bp.policy.upper()
+    except Exception:
+        pass
+
+    # ── Prometheus (non-blocking; failure is silent) ───────────────────────────
+    try:
+        provider_label = meta.selected_provider or "unknown"
+        model_label = meta.selected_model or "unknown"
+
+        record_gateway_request(
+            provider=provider_label,
+            model=model_label,
+            status="success",
+            latency_ms=meta.latency_ms or 0,
+        )
+
+        if meta.failover_triggered and meta.original_provider:
+            fallback_requests_total.labels(
+                from_provider=meta.original_provider,
+                to_provider=provider_label,
+            ).inc()
+
+        if meta.budget_downgraded:
+            budget_downgrade_total.inc()
+
+        if meta.circuit_breaker_state:
+            update_circuit_breaker_state(provider_label, meta.circuit_breaker_state)
+
+    except Exception:
+        pass
+
+    # ── RequestLog background write (non-blocking) ────────────────────────────
+    if settings.request_log_enabled:
+        try:
+            log_data = build_success_log(
+                request_id=request_id,
+                context=context,
+                response=response,
+                trace_id=get_current_trace_id(),
+                budget_policy=budget_policy,
+            )
+            background_tasks.add_task(write_request_log, log_data)
+        except Exception:
+            pass
+
+    return response
