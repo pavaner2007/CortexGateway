@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.endpoints.analytics import router as analytics_router
 from app.api.v1.endpoints.api_keys import router as api_keys_router
+from app.api.v1.endpoints.auth_me import router as auth_me_router
 from app.api.v1.endpoints.bootstrap import router as bootstrap_router
 from app.api.v1.endpoints.budget import router as budget_router
 from app.api.v1.endpoints.rate_limits import router as rate_limits_router
@@ -223,6 +224,9 @@ def create_application() -> FastAPI:
 
     # Phase 7 — analytics (admin only, org-scoped)
     application.include_router(analytics_router, prefix="/api/v1")
+
+    # Phase 8 — auth/me (dashboard login validation)
+    application.include_router(auth_me_router, prefix="/api/v1")
 
     return application
 

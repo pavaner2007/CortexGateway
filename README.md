@@ -59,6 +59,8 @@ Your Application
 | **Logging** | Loguru |
 | **Observability** | Prometheus Client · OpenTelemetry (API/SDK/OTLP) |
 | **Frontend** | React 18 · TypeScript · Vite · Tailwind CSS |
+| **State Management** | TanStack Query (React Query v5) |
+| **Charting** | Recharts |
 | **Routing** | React Router v6 |
 | **Testing** | pytest · pytest-asyncio · httpx · respx |
 | **Containers** | Docker · Docker Compose · Ollama · Prometheus · Grafana |
@@ -165,7 +167,21 @@ Your Application
   - `GET /api/v1/analytics/budget-events` — BLOCK / WARN / DOWNGRADE event counts
   - `GET /api/v1/analytics/timeseries` — time-bucketed request/cost/error (hour/day/week)
 - **Prometheus + Grafana** — included in Docker Compose; Prometheus scrapes `/metrics` every 15 s; Grafana at port 3000 for dashboard creation
-- **288 automated tests** — 288/288 passing; zero real API credits required
+- **294 automated tests** — 294/294 passing; zero real API credits required
+
+### Admin Dashboard ✅
+- **Single-page React Admin Dashboard** (`frontend/`) — operator interface for everything built in Phases 1–7
+- **Login page** — validates any API key via `GET /api/v1/auth/me`; only admin keys gain access; key stored securely in `sessionStorage` (cleared on tab close); key never logged, printed, or embedded in URLs
+- **Auto 401 redirect** — any expired session automatically clears state and redirects to `/login`
+- **Dashboard** — live KPI cards (requests, errors, error rate, avg latency, cost); timeseries area chart; cost-by-provider bar chart; configurable time range (24h / 7d / 30d / month); 60-second auto-polling
+- **Providers page** — registered provider list with enabled/available status; last-24h historical traffic metrics (latency, errors, success rate) clearly labeled as historical, not live circuit-breaker state
+- **Teams page** — org-scoped team list with links to team detail
+- **Team Detail page** — full API key management (create with role, revoke with confirmation dialog; plaintext shown once, then dismissed); budget display and editing with confirmation gate; rate limit display and per-team override editing
+- **Budgets page** — cross-team budget overview with color-coded progress bars (healthy/warning/critical) and policy badges
+- **Analytics page** — full date range selector; requests timeseries; cost chart with provider/model/team groupBy toggle; latency p50/p95/p99 chart; error breakdown table; failover list; budget event list
+- **Logs page** — paginated request log (50/page); status and provider filters persisted in URL params; slide-out detail drawer per request
+- **`GET /api/v1/auth/me`** — new minimal endpoint returning org_id, team_id, api_key_id, role from authenticated context; enables frontend org discovery without additional lookups
+- **`request_id` filter on analytics** — optional `request_id=` query parameter on `GET /api/v1/analytics/requests` for single-record lookup (used by log detail view)
 
 ---
 
@@ -197,7 +213,7 @@ That's it. All services start automatically.
 
 | Service | URL |
 |---------|-----|
-| Frontend Dashboard | http://localhost:5173 |
+| **Admin Dashboard** | http://localhost:5173 _(log in with an admin API key)_ |
 | Backend API | http://localhost:8000 |
 | Swagger UI | http://localhost:8000/docs |
 | ReDoc | http://localhost:8000/redoc |
@@ -205,6 +221,8 @@ That's it. All services start automatically.
 | Prometheus Metrics | http://localhost:8000/metrics |
 | Prometheus UI | http://localhost:9090 |
 | Grafana | http://localhost:3000 _(admin / admin)_ |
+
+> **Admin Dashboard Login**: After bootstrapping (`POST /api/v1/bootstrap`), use the returned admin API key at http://localhost:5173/login. The key is stored securely in `sessionStorage` and never exposed in logs or URLs.
 
 ---
 

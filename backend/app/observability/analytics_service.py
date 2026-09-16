@@ -41,6 +41,7 @@ def _apply_common_filters(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     status: Optional[str] = None,
+    request_id: Optional[str] = None,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ):
@@ -54,6 +55,8 @@ def _apply_common_filters(
         stmt = stmt.where(RequestLog.model == model)
     if status:
         stmt = stmt.where(RequestLog.status == status)
+    if request_id:
+        stmt = stmt.where(RequestLog.request_id == request_id)
     if from_dt:
         stmt = stmt.where(RequestLog.created_at >= from_dt)
     if to_dt:
@@ -77,6 +80,7 @@ class AnalyticsService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         status: Optional[str] = None,
+        request_id: Optional[str] = None,
         from_dt: Optional[datetime] = None,
         to_dt: Optional[datetime] = None,
         page: int = 1,
@@ -94,6 +98,7 @@ class AnalyticsService:
             provider=provider,
             model=model,
             status=status,
+            request_id=request_id,
             from_dt=from_dt,
             to_dt=to_dt,
         )
