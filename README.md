@@ -183,6 +183,16 @@ Your Application
 - **`GET /api/v1/auth/me`** — new minimal endpoint returning org_id, team_id, api_key_id, role from authenticated context; enables frontend org discovery without additional lookups
 - **`request_id` filter on analytics** — optional `request_id=` query parameter on `GET /api/v1/analytics/requests` for single-record lookup (used by log detail view)
 
+### Phase 9A — Model Registry ✅
+- **Persistent Model Registry** — `model_registry` PostgreSQL table replacing the former static catalog; each entry stores provider, model name, split input/output pricing, capability tokens, context window, baseline latency, and enabled flag
+- **Admin CRUD API** — `GET / POST / PATCH / DELETE /api/v1/models` (admin only); all mutations immediately refresh the in-memory catalog singleton
+- **DB-Backed Catalog Singleton** — `_shared_catalog` loaded from the registry at startup and refreshed every 60 s via a background task; eliminates hard-coded pricing and capability data from source code
+- **Ollama Intersection Logic** — Ollama model eligibility is enforced as **registry ∩ installed**: models must be both registered in the DB *and* currently pulled/running in Ollama; unregistered installs and registered-but-missing models are both excluded from routing candidates
+- **Bare-Tag Model Matching** — registry entry `llama3.2` automatically matches live Ollama model `llama3.2:latest` so operators don't need duplicate entries per tag
+- **Live Catalog Wiring** — `RoutingEngine` (Phase 3) and `CostCalculator` (Phase 6) both consume `_shared_catalog` so routing scores and cost estimates always reflect the latest admin configuration without a restart
+- **Alembic Migration** — `0005_phase9a_model_registry.py` creates the table and seeds 15 production-ready model entries (Gemini, Groq, Ollama)
+- **326 automated tests** — 326/326 passing; 32 new Phase 9A tests covering CRUD, RBAC, validation, Phase 3/6 integration, and all Ollama intersection cases
+
 ---
 
 ## Quick Start
@@ -267,7 +277,7 @@ pytest tests/ -v
 ```
 
 ```
-288 passed in 4.40s
+326 passed in 4.60s
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -662,6 +672,58 @@ curl -X DELETE http://localhost:8000/api/v1/teams/{team_id}/rate-limits \
 
 ---
 
+## Model Registry API (Phase 9A)
+
+All model registry endpoints require an **admin** API key. The registry is the single source of truth for model metadata — pricing, capabilities, context window, and routing eligibility.
+
+### List All Models
+
+```bash
+curl http://localhost:8000/api/v1/models \
+  -H "Authorization: Bearer cxg_admin_key"
+```
+
+### Add a New Model
+
+```bash
+curl -X POST http://localhost:8000/api/v1/models \
+  -H "Authorization: Bearer cxg_admin_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "groq",
+    "model_name": "llama-3.3-70b-versatile",
+    "input_cost_per_1k": 0.00059,
+    "output_cost_per_1k": 0.00079,
+    "capabilities": ["text", "json", "code", "tools"],
+    "context_window": 128000,
+    "baseline_latency_ms": 180.0,
+    "enabled": true
+  }'
+```
+
+**Supported capability tokens:** `text` · `vision` · `json` · `code` · `tools` · `function_calling` · `complex_reasoning`
+
+### Update a Model (e.g. disable it)
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/models/{model_id} \
+  -H "Authorization: Bearer cxg_admin_key" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+Changes take effect immediately — the in-memory routing catalog is refreshed within milliseconds.
+
+### Delete a Model
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/models/{model_id} \
+  -H "Authorization: Bearer cxg_admin_key"
+# Returns 204 No Content
+```
+
+---
+
 ### Local Ollama Setup & Model Pulling
 
 To run local models without external API keys:
@@ -785,7 +847,8 @@ CortexGateway/
 │   │       ├── 0001_phase5_auth.py             # organizations, teams, api_keys tables
 │   │       ├── 0002_phase6_budgets.py          # budgets table with reserved column
 │   │       ├── 0003_phase6_team_rate_limits.py # per-team rate limit overrides table
-│   │       └── 0004_phase7_request_logs.py     # request_logs table (observability)
+│   │       ├── 0004_phase7_request_logs.py     # request_logs table (observability)
+│   │       └── 0005_phase9a_model_registry.py  # model_registry table + 15 seed entries
 │   ├── alembic.ini                    # Alembic config
 │   ├── app/
 │   │   ├── api/v1/endpoints/
@@ -799,6 +862,7 @@ CortexGateway/
 │   │   │   ├── budget.py              # Budget CRUD (admin only)
 │   │   │   ├── rate_limits.py         # Per-team rate limit overrides (admin only)
 │   │   │   ├── analytics.py           # GET /api/v1/analytics/* (admin only, org-scoped)
+│   │   │   ├── model_registry.py      # GET/POST/PATCH/DELETE /api/v1/models (admin, Phase 9A)
 │   │   │   └── metrics.py             # GET /metrics (Prometheus exposition)
 │   │   ├── auth/                      # Auth & Multi-Tenancy
 │   │   │   ├── dependencies.py        # get_request_context, require_admin
@@ -835,14 +899,20 @@ CortexGateway/
 │   │   │   ├── groq_provider.py       # Groq async adapter
 │   │   │   └── ollama_provider.py     # Ollama local async adapter
 │   │   ├── routing/                   # Phase 3 — Intelligent Routing Engine
-│   │   │   ├── router.py              # RoutingEngine orchestrator
-│   │   │   ├── candidates.py          # CandidateBuilder
+│   │   │   ├── router.py              # RoutingEngine orchestrator (uses _shared_catalog)
+│   │   │   ├── candidates.py          # CandidateBuilder (Ollama registry ∩ installed)
 │   │   │   ├── scorer.py              # CandidateScorer (weighted scoring)
 │   │   │   ├── stats.py               # ProviderStatsTracker (rolling metrics)
-│   │   │   ├── metadata.py            # ModelMetadataCatalog (with split pricing)
+│   │   │   ├── metadata.py            # ModelMetadataCatalog + _shared_catalog singleton
 │   │   │   ├── policies.py            # RoutingPolicyRegistry (mode weights)
 │   │   │   ├── models.py              # ModelMetadata (input/output cost), RoutingDecision
 │   │   │   └── exceptions.py          # Routing-specific exceptions
+│   │   ├── model_registry/            # Phase 9A — Model Registry
+│   │   │   ├── __init__.py
+│   │   │   ├── models.py              # ModelRegistryEntry ORM (JSONB capabilities)
+│   │   │   ├── schemas.py             # Create / Update / Response / ListResponse schemas
+│   │   │   ├── service.py             # CRUD + get_all_for_catalog (DB → catalog)
+│   │   │   └── exceptions.py          # ModelNotFoundError, ModelAlreadyExistsError
 │   │   ├── reliability/               # Phase 4 — Reliability and Resilience
 │   │   │   ├── executor.py            # ReliabilityExecutor (retries, failover)
 │   │   │   ├── circuit_breaker.py     # 3-state circuit breaker per provider
@@ -879,7 +949,9 @@ CortexGateway/
 │   │   ├── test_rate_limiting.py          # Sliding-window limiter tests (incl. boundary burst regression)
 │   │   ├── test_budget.py                 # Budget + cost tests (incl. DOWNGRADE policy coverage)
 │   │   ├── test_team_rate_limits.py       # Per-team rate limit override tests
-│   │   └── test_observability.py          # Observability: metrics, log writer, analytics RBAC, cardinality guard
+│   │   ├── test_observability.py          # Observability: metrics, log writer, analytics RBAC, cardinality guard
+│   │   ├── test_phase8_backend.py         # Phase 8 backend additions (/auth/me, request_id filter)
+│   │   └── test_phase9a_model_registry.py # Phase 9A: CRUD, RBAC, Ollama intersection, catalog wiring
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
@@ -919,7 +991,12 @@ CortexGateway/
 | 5 | Authentication & Multi-Tenancy | ✅ **Done** |
 | 6 | Rate Limiting & Budget Management | ✅ **Done** |
 | 7 | Observability & Analytics | ✅ **Done** |
-| 8 | Admin Dashboard | Planned |
+| 8 | Admin Dashboard | ✅ **Done** |
+| 9A | Model Registry | ✅ **Done** |
+| 9B | Semantic Caching | 🔜 Next |
+| 9C | Policy Engine | Planned |
+| 9D | A/B Testing & Canary | Planned |
+| 9E | Guardrails | Planned |
 
 ---
 
