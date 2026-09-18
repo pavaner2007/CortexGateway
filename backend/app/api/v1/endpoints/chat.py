@@ -69,11 +69,13 @@ def _get_budget_service(
 def _get_cost_calculator(
     settings: Settings = Depends(get_settings),
 ) -> CostCalculator:
-    """Return CostCalculator with a ModelMetadataCatalog reflecting Ollama pricing from settings."""
-    catalog = ModelMetadataCatalog(
-        ollama_default_cost=settings.ollama_cost_per_1k_input_tokens,
-    )
-    return CostCalculator(catalog=catalog)
+    """Return CostCalculator using the DB-backed shared ModelMetadataCatalog.
+
+    Phase 9A: Using _shared_catalog instead of a per-request fresh catalog
+    so pricing reflects any admin changes to the model registry.
+    """
+    from app.routing.metadata import _shared_catalog
+    return CostCalculator(catalog=_shared_catalog)
 
 
 @router.post(

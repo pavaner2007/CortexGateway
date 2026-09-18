@@ -55,9 +55,15 @@ class RoutingEngine:
     ) -> None:
         self._registry = registry
         self._stats_tracker = stats_tracker or ProviderStatsTracker()
-        self._metadata_catalog = metadata_catalog or ModelMetadataCatalog(
-            ollama_default_cost=ollama_default_cost
-        )
+        if metadata_catalog is not None:
+            self._metadata_catalog = metadata_catalog
+        else:
+            # Phase 9A: default to the shared DB-backed catalog singleton.
+            # Fallback to a fresh local catalog only if _shared_catalog is somehow unavailable.
+            from app.routing.metadata import _shared_catalog as _global_catalog
+            self._metadata_catalog = _global_catalog or ModelMetadataCatalog(
+                ollama_default_cost=ollama_default_cost
+            )
         self._policy_registry = policy_registry or RoutingPolicyRegistry()
         self._scorer = scorer or CandidateScorer()
         self._candidate_builder = CandidateBuilder(
@@ -243,14 +249,20 @@ _routing_engine_instance: Optional[RoutingEngine] = None
 def get_routing_engine(
     registry: ProviderRegistry = Depends(get_registry),
 ) -> RoutingEngine:
-    """Return or construct the global RoutingEngine singleton."""
+    """Return or construct the global RoutingEngine singleton.
+
+    Phase 9A: The RoutingEngine now uses _shared_catalog (DB-backed,
+    refreshed every 60 s) instead of a locally created ModelMetadataCatalog.
+    """
     global _routing_engine_instance
     if _routing_engine_instance is None:
         from app.config.settings import get_settings
+        from app.routing.metadata import _shared_catalog
 
         s = get_settings()
         _routing_engine_instance = RoutingEngine(
             registry=registry,
+            metadata_catalog=_shared_catalog,
             default_mode=s.routing_default_mode,  # type: ignore
             ollama_default_cost=s.routing_ollama_cost_per_1k,
         )

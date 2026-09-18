@@ -40,8 +40,24 @@ from app.schemas.chat import ChatMessage, UsageMetadata
 
 
 def _make_catalog(**overrides) -> ModelMetadataCatalog:
-    """Create a catalog with two models for testing."""
+    """Create a catalog with known model pricing for testing.
+
+    Phase 9A: Populates a fresh catalog with explicit test entries.
+    Gemini, Groq, and Ollama entries are included so cost/routing tests
+    work without relying on the DB-seeded _shared_catalog.
+    """
     catalog = ModelMetadataCatalog()
+    # Gemini entry (used by cost calculation tests)
+    catalog._catalog["gemini:gemini-1.5-flash"] = ModelMetadata(
+        provider="gemini",
+        model="gemini-1.5-flash",
+        cost_per_1k_tokens=0.0001875,
+        input_cost_per_1k=0.000075,
+        output_cost_per_1k=0.000300,
+        capabilities=["text", "vision", "json", "code"],
+        context_window=1_000_000,
+        baseline_latency_ms=450.0,
+    )
     # Override Groq 70b for expensive model test
     catalog._catalog["groq:llama-3.3-70b-versatile"] = ModelMetadata(
         provider="groq",
@@ -63,6 +79,17 @@ def _make_catalog(**overrides) -> ModelMetadataCatalog:
         capabilities=["text", "json", "code"],
         context_window=128000,
         baseline_latency_ms=90.0,
+    )
+    # Ollama (zero-cost)
+    catalog._catalog["ollama:llama3.2"] = ModelMetadata(
+        provider="ollama",
+        model="llama3.2",
+        cost_per_1k_tokens=0.0,
+        input_cost_per_1k=0.0,
+        output_cost_per_1k=0.0,
+        capabilities=["text", "json", "code"],
+        context_window=8192,
+        baseline_latency_ms=300.0,
     )
     return catalog
 

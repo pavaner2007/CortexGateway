@@ -30,12 +30,13 @@ from app.api.v1.endpoints.rate_limits import router as rate_limits_router
 from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.health import router as system_router
 from app.api.v1.endpoints.metrics import router as metrics_router
+from app.api.v1.endpoints.model_registry import router as model_registry_router
 from app.api.v1.endpoints.organizations import router as organizations_router
 from app.api.v1.endpoints.providers import router as providers_router
 from app.api.v1.endpoints.teams import router as teams_router
 from app.config.settings import get_settings
 from app.core.logging import configure_logging, logger
-from app.database.session import close_db, init_db
+from app.database.session import close_db, get_db_session, init_db
 from app.exceptions import register_exception_handlers
 from app.middleware.logging import RequestLoggingMiddleware
 from app.middleware.request_id import RequestIDMiddleware
@@ -105,6 +106,54 @@ def _init_providers() -> None:
     )
 
 
+async def _init_model_catalog() -> None:
+    """
+    Load the ModelMetadataCatalog from the model_registry DB table.
+
+    Called once at startup to populate the in-memory catalog used by
+    Phase 3 routing and Phase 6 cost calculation.
+    """
+    from app.routing.metadata import _shared_catalog
+    try:
+        async with get_db_session() as session:
+            await _shared_catalog.load_from_db(session)
+        logger.info(
+            "ModelMetadataCatalog loaded from DB",
+            total=_shared_catalog.size,
+        )
+    except Exception as exc:
+        logger.warning(
+            "ModelMetadataCatalog initial load failed — routing will use empty catalog",
+            error=str(exc),
+        )
+
+
+async def _catalog_refresh_loop() -> None:
+    """
+    Background task: refresh the ModelMetadataCatalog every 60 seconds.
+
+    Runs indefinitely until cancelled during application shutdown.
+    Failures are logged as warnings and never crash the application.
+    """
+    import asyncio
+    from app.routing.metadata import _shared_catalog
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            async with get_db_session() as session:
+                await _shared_catalog.load_from_db(session)
+            logger.debug(
+                "ModelMetadataCatalog background refresh complete",
+                total=_shared_catalog.size,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ModelMetadataCatalog background refresh failed",
+                error=str(exc),
+            )
+
+
 def _init_tracing() -> None:
     """
     Initialize OpenTelemetry tracing.
@@ -159,11 +208,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _init_providers()
     _init_tracing()
 
+    # Phase 9A — load model catalog from DB (after DB is initialised)
+    await _init_model_catalog()
+
+    # Phase 9A — start background catalog refresh every 60 s
+    import asyncio
+    refresh_task = asyncio.create_task(_catalog_refresh_loop())
+
     logger.info("Application startup complete")
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("Shutting down application …")
+    refresh_task.cancel()
     await close_db()
     await close_redis()
     logger.info("Application shutdown complete")
@@ -227,6 +284,9 @@ def create_application() -> FastAPI:
 
     # Phase 8 — auth/me (dashboard login validation)
     application.include_router(auth_me_router, prefix="/api/v1")
+
+    # Phase 9A — model registry (admin only)
+    application.include_router(model_registry_router, prefix="/api/v1")
 
     return application
 

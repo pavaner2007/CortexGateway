@@ -167,15 +167,17 @@ class TestProviderStatsTracker:
 
 class TestModelMetadataCatalog:
     def test_known_model_lookup(self) -> None:
-        catalog = ModelMetadataCatalog()
-        meta = catalog.get("groq", "llama-3.3-70b-versatile")
+        # Phase 9A: _shared_catalog is pre-seeded with test data by conftest.py
+        from app.routing.metadata import _shared_catalog
+        meta = _shared_catalog.get("groq", "llama-3.3-70b-versatile")
         assert meta.provider == "groq"
         assert meta.baseline_latency_ms == 180.0
         assert "json" in meta.capabilities
 
     def test_bare_tag_fallback(self) -> None:
-        catalog = ModelMetadataCatalog()
-        meta = catalog.get("ollama", "llama3.2:3b")
+        # Phase 9A: _shared_catalog has 'llama3.2' registered; bare-tag match applies
+        from app.routing.metadata import _shared_catalog
+        meta = _shared_catalog.get("ollama", "llama3.2:3b")
         assert meta.provider == "ollama"
         assert meta.cost_per_1k_tokens == 0.0
 

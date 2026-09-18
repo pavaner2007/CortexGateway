@@ -25,6 +25,7 @@ from app.database.base import Base
 # Alembic will not see tables that are not imported here.
 import app.auth.models  # noqa: F401
 import app.observability.models  # noqa: F401
+import app.model_registry.models  # noqa: F401
 
 
 # Alembic Config object provides access to alembic.ini values.
