@@ -31,6 +31,10 @@ def client() -> TestClient:
     # real network connections during tests.
     # Phase 9A: also patch catalog init + refresh loop.
     # Phase 9B: also patch _semantic_cache initialization.
+    # Phase 9C: also patch PolicyResolver.resolve to return global default.
+    from app.policy.schemas import GLOBAL_DEFAULT_POLICY
+
+    _resolve_mock = AsyncMock(return_value=GLOBAL_DEFAULT_POLICY)
     with (
         patch("app.main.init_db"),
         patch("app.main.init_redis"),
@@ -39,6 +43,7 @@ def client() -> TestClient:
         patch("app.main._init_model_catalog", new_callable=AsyncMock),
         patch("app.main._catalog_refresh_loop", new_callable=AsyncMock),
         patch("app.main.build_semantic_cache", return_value=None),
+        patch("app.policy.resolver.PolicyResolver.resolve", new=_resolve_mock),
     ):
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c

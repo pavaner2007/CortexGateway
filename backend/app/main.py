@@ -34,6 +34,7 @@ from app.api.v1.endpoints.model_registry import router as model_registry_router
 from app.api.v1.endpoints.organizations import router as organizations_router
 from app.api.v1.endpoints.providers import router as providers_router
 from app.api.v1.endpoints.teams import router as teams_router
+from app.api.v1.endpoints.policy import router as policy_router
 from app.config.settings import get_settings
 from app.core.logging import configure_logging, logger
 from app.database.session import close_db, get_db_session, init_db
@@ -303,6 +304,9 @@ def create_application() -> FastAPI:
 
     # Phase 9A — model registry (admin only)
     application.include_router(model_registry_router, prefix="/api/v1")
+
+    # Phase 9C — team policy engine (admin only)
+    application.include_router(policy_router, prefix="/api/v1")
 
     return application
 

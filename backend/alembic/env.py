@@ -26,6 +26,7 @@ from app.database.base import Base
 import app.auth.models  # noqa: F401
 import app.observability.models  # noqa: F401
 import app.model_registry.models  # noqa: F401
+import app.policy.models  # noqa: F401  Phase 9C
 
 
 # Alembic Config object provides access to alembic.ini values.

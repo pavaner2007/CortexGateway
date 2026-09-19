@@ -1,8 +1,10 @@
 """
-Cortex Gateway — Chat Service (Phase 4 + Phase 5 + Phase 6 + Phase 9B).
+Cortex Gateway — Chat Service (Phase 4 + Phase 5 + Phase 6 + Phase 9B + Phase 9C).
 
 Orchestrates the full chat completion pipeline:
 
+    Phase 9C Policy Resolution
+        ↓
     Phase 5 Auth → RequestContext
         ↓
     Phase 6 Rate Limiting (API key / Team / Org)
@@ -27,13 +29,14 @@ Orchestrates the full chat completion pipeline:
 
 ChatService responsibilities:
   1. Enforce rate limits using RequestContext.team_id, org_id, api_key_id.
-  2. Perform semantic cache lookup (Phase 9B). On HIT: return immediately.
-  3. Estimate request cost and check/reserve budget.
-  4. For DOWNGRADE policy, attempt to find a cheaper candidate.
-  5. Delegate execution to ReliabilityExecutor.
-  6. Reconcile actual cost against the budget reservation.
-  7. Schedule async cache write after successful provider response.
-  8. Return normalized ChatCompletionResponse with Phase 6 + 9B metadata.
+  2. Apply policy: routing strategy default, fallback toggle, budget action, cache toggle.
+  3. Perform semantic cache lookup (Phase 9B). On HIT: return immediately.
+  4. Estimate request cost and check/reserve budget.
+  5. For DOWNGRADE policy, attempt to find a cheaper candidate.
+  6. Delegate execution to ReliabilityExecutor.
+  7. Reconcile actual cost against the budget reservation.
+  8. Schedule async cache write after successful provider response.
+  9. Return normalized ChatCompletionResponse with Phase 6 + 9B + 9C metadata.
 """
 
 from __future__ import annotations
@@ -95,6 +98,8 @@ class ChatService:
         team_rate_limit_service: object = None,
         # Phase 9B
         semantic_cache: object = None,
+        # Phase 9C — pre-resolved policy (None = use global default)
+        resolved_policy: object = None,
     ) -> ChatCompletionResponse:
         """
         Execute a chat completion with rate limiting and budget management.
@@ -113,8 +118,14 @@ class ChatService:
             Normalized ChatCompletionResponse with Phase 6 + Phase 9B metadata.
         """
         from app.config.settings import get_settings as _get_settings
+        from app.policy.schemas import GLOBAL_DEFAULT_POLICY
 
         s = settings or _get_settings()
+
+        # ── 0. Resolve effective policy (Phase 9C) ────────────────────────────
+        # If no resolved_policy was injected (e.g. in legacy tests), fall back
+        # to the global default — behaviour is identical to pre-9C.
+        policy = resolved_policy if resolved_policy is not None else GLOBAL_DEFAULT_POLICY
 
         # ── 1. Rate Limiting ──────────────────────────────────────────────────
         rate_limit_remaining: Optional[int] = None
@@ -156,6 +167,9 @@ class ChatService:
             rate_limit_remaining = outcome.binding_result.remaining
 
         # ── 2. Determine Routing Path ─────────────────────────────────────────
+        # Manual routing: explicit provider+concrete model wins regardless of policy.
+        # Otherwise: use request.routing_mode if explicitly supplied, then fall back
+        # to the team's policy routing strategy.
         is_manual = (
             request.routing_mode == "manual"
             or (
@@ -166,7 +180,13 @@ class ChatService:
             )
         )
 
-        effective_routing_mode = "manual" if is_manual else (request.routing_mode or "auto")
+        # Policy routing strategy becomes the effective default (Phase 9C).
+        policy_routing_mode = policy.routing.strategy  # type: ignore[union-attr]
+        effective_routing_mode = (
+            "manual"
+            if is_manual
+            else (request.routing_mode or policy_routing_mode)
+        )
 
         if is_manual:
             target_provider_name = request.provider
@@ -185,7 +205,14 @@ class ChatService:
         # ── 3. Semantic Cache Lookup (Phase 9B) ────────────────────────────
         # Rate limiting already applied (cache hits count as requests).
         # Budget reservation intentionally deferred — cache hits cost $0.
-        if semantic_cache is not None and context:
+        # Phase 9C: honour policy.cache.enabled override.
+        cache_enabled = getattr(policy, "cache", None)
+        cache_active = (
+            semantic_cache is not None
+            and context
+            and (cache_enabled is None or cache_enabled.enabled)  # type: ignore[union-attr]
+        )
+        if cache_active:
             cached_response = await semantic_cache.lookup(request, context)
             if cached_response is not None:
                 cached_response.metadata.rate_limit_remaining = rate_limit_remaining
@@ -205,9 +232,9 @@ class ChatService:
                 request=request,
             )
 
-            budget_policy = await self._get_budget_policy(
-                budget_service, context.team_id
-            )
+            # Phase 9C: policy is the runtime source of truth for budget action.
+            # _get_budget_policy() (Phase 6 DB read) is no longer the source of truth.
+            budget_policy = policy.budget.action  # type: ignore[union-attr]
 
             if budget_policy == "DOWNGRADE":
                 # Try downgrade path before reservation
@@ -248,8 +275,16 @@ class ChatService:
         response: Optional[ChatCompletionResponse] = None
 
         try:
+            # Phase 9C: honour policy.fallback.enabled.
+            # If policy disables fallback, patch failover_enabled=False onto a copy
+            # of the request so ReliabilityExecutor skips failover.
+            exec_request = request
+            fallback_ok = getattr(getattr(policy, "fallback", None), "enabled", True)
+            if not fallback_ok and request.failover_enabled is not False:
+                exec_request = request.model_copy(update={"failover_enabled": False})
+
             response = await self._reliability_executor.execute(
-                request=request,
+                request=exec_request,
                 request_id=request_id,
                 initial_provider=target_provider_name,
                 initial_model=target_model_name,

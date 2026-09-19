@@ -38,6 +38,8 @@ from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
 from app.semantic_cache.cache import SemanticCache
 from app.services.chat_service import ChatService
 from app.utils.redis_client import get_redis
+from app.policy.resolver import PolicyResolver
+from app.policy.schemas import GLOBAL_DEFAULT_POLICY, ResolvedPolicy
 
 router = APIRouter()
 
@@ -96,6 +98,24 @@ def _get_semantic_cache(
     return build_semantic_cache(redis=redis, settings=settings)
 
 
+async def _get_resolved_policy(
+    context: RequestContext = Depends(get_request_context),
+    session: AsyncSession = Depends(get_db_dependency),
+) -> ResolvedPolicy:
+    """
+    Phase 9C: Resolve the effective team policy once per request.
+
+    Uses the same FastAPI-injected DB session so tests can override
+    get_db_dependency without needing a real PostgreSQL connection.
+    Falls back to the global default if the DB is unavailable.
+    """
+    try:
+        resolver = PolicyResolver(session)
+        return await resolver.resolve(context.team_id)
+    except Exception:
+        return GLOBAL_DEFAULT_POLICY
+
+
 @router.post(
     "/chat/completions",
     response_model=ChatCompletionResponse,
@@ -130,9 +150,15 @@ async def chat_completions(
     cost_calculator: CostCalculator = Depends(_get_cost_calculator),
     semantic_cache: SemanticCache = Depends(_get_semantic_cache),
     settings: Settings = Depends(get_settings),
+    resolved_policy: ResolvedPolicy = Depends(_get_resolved_policy),
 ) -> ChatCompletionResponse:
     """
     Unified chat completion endpoint.
+
+    Phase 9C: resolve the team policy ONCE here (via _get_resolved_policy Depends),
+    before calling ChatService. The single ResolvedPolicy object is passed down
+    and is the only source of truth for routing strategy, fallback, budget action,
+    and cache enable for this request.
 
     Phase 7 observability is additive and non-blocking:
     - All exceptions from the pipeline are always re-raised.
@@ -171,6 +197,7 @@ async def chat_completions(
             cost_calculator=cost_calculator,
             settings=settings,
             semantic_cache=semantic_cache,
+            resolved_policy=resolved_policy,
         )
 
     except RateLimitExceeded as exc:
@@ -235,14 +262,9 @@ async def chat_completions(
     # ── Success path ──────────────────────────────────────────────────────────
     meta = response.metadata
 
-    # Resolve budget policy for RequestLog (best-effort; failure is silent)
-    budget_policy: str | None = None
-    try:
-        bp = await budget_service.get_budget(context.team_id)
-        if bp:
-            budget_policy = bp.policy.upper()
-    except Exception:
-        pass
+    # Resolve budget policy for RequestLog — use the resolved policy (Phase 9C)
+    # rather than a second DB read.
+    budget_policy: str | None = resolved_policy.budget.action
 
     # ── Prometheus (non-blocking; failure is silent) ──────────────────────────
     try:

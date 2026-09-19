@@ -34,6 +34,23 @@ from app.budget.service import BudgetService
 from app.routing.metadata import ModelMetadataCatalog
 from app.routing.models import ModelMetadata
 from app.schemas.chat import ChatMessage, UsageMetadata
+from app.policy.schemas import (
+    BudgetPolicySection,
+    CachePolicy,
+    FallbackPolicy,
+    ResolvedPolicy,
+    RoutingPolicy,
+)
+
+# Phase 9C: policy with DOWNGRADE budget action — used by downgrade tests
+# so ChatService reads action from the resolved policy (not the Budget DB row).
+_DOWNGRADE_POLICY = ResolvedPolicy(
+    routing=RoutingPolicy(strategy="auto"),
+    fallback=FallbackPolicy(enabled=True),
+    budget=BudgetPolicySection(action="DOWNGRADE"),
+    cache=CachePolicy(enabled=False),
+    source="team",
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -690,6 +707,7 @@ async def test_chat_service_budget_downgrade_switches_to_cheaper_provider():
         context=context,
         budget_service=mock_budget_service,
         cost_calculator=calc,
+        resolved_policy=_DOWNGRADE_POLICY,  # Phase 9C: policy is source of truth
     )
 
     # Assertions
@@ -758,6 +776,7 @@ async def test_chat_service_budget_downgrade_no_affordable_candidate_raises_budg
             context=context,
             budget_service=mock_budget_service,
             cost_calculator=calc,
+            resolved_policy=_DOWNGRADE_POLICY,  # Phase 9C
         )
 
     assert exc_info.value.team_id == "team-broke"
@@ -858,6 +877,7 @@ async def test_chat_service_budget_downgrade_ollama_always_affordable():
         context=context,
         budget_service=mock_budget_service,
         cost_calculator=calc,
+        resolved_policy=_DOWNGRADE_POLICY,  # Phase 9C
     )
 
     assert response.metadata.budget_downgraded is True
@@ -977,6 +997,7 @@ async def test_chat_service_budget_downgrade_respects_required_capabilities():
         context=context,
         budget_service=mock_budget_service,
         cost_calculator=calc,
+        resolved_policy=_DOWNGRADE_POLICY,  # Phase 9C
     )
 
     assert response.metadata.budget_downgraded is True
