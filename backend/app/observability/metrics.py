@@ -115,6 +115,28 @@ rate_limit_exceeded_total = Counter(
     ["scope"],
 )
 
+# ── Semantic Cache metrics (Phase 9B) ─────────────────────────────────────────
+# Zero high-cardinality labels: team_id, request_id never appear here.
+# Use RequestLog (analytics API) for per-team cache metrics.
+
+semantic_cache_hits_total = Counter(
+    "semantic_cache_hits_total",
+    "Number of chat completion requests served from the semantic cache.",
+    [],
+)
+
+semantic_cache_misses_total = Counter(
+    "semantic_cache_misses_total",
+    "Number of chat completion requests that were not served from the semantic cache.",
+    [],
+)
+
+semantic_cache_embedding_errors_total = Counter(
+    "semantic_cache_embedding_errors_total",
+    "Number of embedding generation failures encountered during semantic cache lookups.",
+    [],
+)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

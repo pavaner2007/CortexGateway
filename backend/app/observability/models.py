@@ -128,6 +128,12 @@ class RequestLog(Base):
     # What the policy did: "blocked" | "warned" | "downgraded" | "none"
     budget_action: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
+    # ── Semantic Cache (Phase 9B) ─────────────────────────────────────────────
+    # True when the response was served from the semantic cache (no provider call).
+    cache_hit: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     # ── Timestamp ────────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now_utc

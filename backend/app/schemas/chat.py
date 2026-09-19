@@ -95,6 +95,10 @@ class ChatCompletionRequest(BaseModel):
         True,
         description="Enable automatic failover if the selected provider fails.",
     )
+    stream: Optional[bool] = Field(
+        False,
+        description="If true, responses will be streamed. Note: streaming bypasses semantic cache.",
+    )
 
     @field_validator("provider", mode="before")
     @classmethod
@@ -214,6 +218,11 @@ class ResponseMetadata(BaseModel):
     rate_limit_remaining: Optional[int] = Field(
         None,
         description="Remaining requests in the tightest-bound rate-limit window.",
+    )
+    # ── Phase 9B: Semantic Cache metadata ───────────────────────────
+    cache_hit: bool = Field(
+        False,
+        description="True if this response was served from the semantic cache (no provider call made).",
     )
 
 

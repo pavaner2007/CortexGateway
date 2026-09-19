@@ -174,6 +174,25 @@ class Settings(BaseSettings):
     # Set to false only for testing / local dev with no DB.
     request_log_enabled: bool = True
 
+    # ── Semantic Cache (Phase 9B) ──────────────────────────────────────────────
+    # Master switch. Off by default; must be explicitly enabled.
+    semantic_cache_enabled: bool = False
+    # Cache namespace version. Change to invalidate all existing entries.
+    semantic_cache_version: str = "v1"
+    # TTL for each cache entry in seconds (default: 1 hour).
+    semantic_cache_ttl_seconds: int = 3600
+    # Cosine similarity threshold for a cache hit [0.0, 1.0].
+    # Higher = stricter (fewer hits). Lower = more aggressive caching.
+    semantic_cache_similarity_threshold: float = 0.92
+    # Maximum number of cached entries stored per team.
+    # Older entries are evicted when this limit is reached.
+    semantic_cache_max_entries_per_team: int = 500
+    # Embedding provider (currently only 'ollama' is supported).
+    semantic_cache_embedding_provider: str = "ollama"
+    # Embedding model — must be pulled in Ollama before caching works.
+    # Example: ollama pull nomic-embed-text
+    semantic_cache_embedding_model: str = "nomic-embed-text"
+
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -35,6 +35,7 @@ from app.rate_limit.limiter import RateLimiter
 from app.routing.metadata import ModelMetadataCatalog
 from app.routing.router import RoutingEngine, get_routing_engine
 from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
+from app.semantic_cache.cache import SemanticCache
 from app.services.chat_service import ChatService
 from app.utils.redis_client import get_redis
 
@@ -78,6 +79,23 @@ def _get_cost_calculator(
     return CostCalculator(catalog=_shared_catalog)
 
 
+def _get_semantic_cache(
+    redis: Redis = Depends(get_redis),
+    settings: Settings = Depends(get_settings),
+) -> SemanticCache:
+    """Return the SemanticCache backed by the shared Redis client.
+
+    Phase 9B: Constructed fresh per-request (cheap — no I/O) using
+    the module-level _semantic_cache singleton when available.
+    """
+    from app.main import _semantic_cache
+    if _semantic_cache is not None:
+        return _semantic_cache
+    # Fallback (e.g. during tests without main.py lifespan)
+    from app.semantic_cache.cache import build_semantic_cache
+    return build_semantic_cache(redis=redis, settings=settings)
+
+
 @router.post(
     "/chat/completions",
     response_model=ChatCompletionResponse,
@@ -110,6 +128,7 @@ async def chat_completions(
     rate_limiter: RateLimiter = Depends(_get_rate_limiter),
     budget_service: BudgetService = Depends(_get_budget_service),
     cost_calculator: CostCalculator = Depends(_get_cost_calculator),
+    semantic_cache: SemanticCache = Depends(_get_semantic_cache),
     settings: Settings = Depends(get_settings),
 ) -> ChatCompletionResponse:
     """
@@ -131,6 +150,8 @@ async def chat_completions(
         fallback_requests_total,
         rate_limit_exceeded_total,
         record_gateway_request,
+        semantic_cache_hits_total,
+        semantic_cache_misses_total,
         update_circuit_breaker_state,
     )
     from app.observability.tracing import get_current_trace_id
@@ -149,6 +170,7 @@ async def chat_completions(
             budget_service=budget_service,
             cost_calculator=cost_calculator,
             settings=settings,
+            semantic_cache=semantic_cache,
         )
 
     except RateLimitExceeded as exc:
@@ -222,7 +244,7 @@ async def chat_completions(
     except Exception:
         pass
 
-    # ── Prometheus (non-blocking; failure is silent) ───────────────────────────
+    # ── Prometheus (non-blocking; failure is silent) ──────────────────────────
     try:
         provider_label = meta.selected_provider or "unknown"
         model_label = meta.selected_model or "unknown"
@@ -233,6 +255,12 @@ async def chat_completions(
             status="success",
             latency_ms=meta.latency_ms or 0,
         )
+
+        # Phase 9B: cache hit / miss counters
+        if meta.cache_hit:
+            semantic_cache_hits_total.inc()
+        else:
+            semantic_cache_misses_total.inc()
 
         if meta.failover_triggered and meta.original_provider:
             fallback_requests_total.labels(
@@ -249,7 +277,7 @@ async def chat_completions(
     except Exception:
         pass
 
-    # ── RequestLog background write (non-blocking) ────────────────────────────
+    # ── RequestLog background write (non-blocking) ────────────────────────
     if settings.request_log_enabled:
         try:
             log_data = build_success_log(
@@ -258,6 +286,7 @@ async def chat_completions(
                 response=response,
                 trace_id=get_current_trace_id(),
                 budget_policy=budget_policy,
+                cache_hit=meta.cache_hit,  # Phase 9B
             )
             background_tasks.add_task(write_request_log, log_data)
         except Exception:

@@ -1,5 +1,5 @@
 """
-Cortex Gateway — Chat Service (Phase 4 + Phase 5 + Phase 6).
+Cortex Gateway — Chat Service (Phase 4 + Phase 5 + Phase 6 + Phase 9B).
 
 Orchestrates the full chat completion pipeline:
 
@@ -7,6 +7,8 @@ Orchestrates the full chat completion pipeline:
         ↓
     Phase 6 Rate Limiting (API key / Team / Org)
         ↓
+    Phase 9B Semantic Cache Lookup
+        ↓ (MISS only)
     Phase 6 Budget Pre-Check + Reservation
         ↓
     Phase 3 Routing Engine (provider/model selection)
@@ -19,15 +21,19 @@ Orchestrates the full chat completion pipeline:
         ↓
     Phase 6 Budget Reconciliation
         ↓
-    Response with cost/budget metadata
+    Phase 9B Cache Write (background, non-blocking)
+        ↓
+    Response with cost/budget/cache metadata
 
 ChatService responsibilities:
   1. Enforce rate limits using RequestContext.team_id, org_id, api_key_id.
-  2. Estimate request cost and check/reserve budget.
-  3. For DOWNGRADE policy, attempt to find a cheaper candidate.
-  4. Delegate execution to ReliabilityExecutor.
-  5. Reconcile actual cost against the budget reservation.
-  6. Return normalized ChatCompletionResponse with Phase 6 metadata.
+  2. Perform semantic cache lookup (Phase 9B). On HIT: return immediately.
+  3. Estimate request cost and check/reserve budget.
+  4. For DOWNGRADE policy, attempt to find a cheaper candidate.
+  5. Delegate execution to ReliabilityExecutor.
+  6. Reconcile actual cost against the budget reservation.
+  7. Schedule async cache write after successful provider response.
+  8. Return normalized ChatCompletionResponse with Phase 6 + 9B metadata.
 """
 
 from __future__ import annotations
@@ -87,6 +93,8 @@ class ChatService:
         cost_calculator: object = None,
         settings: object = None,
         team_rate_limit_service: object = None,
+        # Phase 9B
+        semantic_cache: object = None,
     ) -> ChatCompletionResponse:
         """
         Execute a chat completion with rate limiting and budget management.
@@ -102,7 +110,7 @@ class ChatService:
             settings:                Settings instance for Phase 6 config flags.
 
         Returns:
-            Normalized ChatCompletionResponse with Phase 6 metadata.
+            Normalized ChatCompletionResponse with Phase 6 + Phase 9B metadata.
         """
         from app.config.settings import get_settings as _get_settings
 
@@ -174,7 +182,17 @@ class ChatService:
             target_model_name = decision.model
             effective_routing_mode = decision.routing_mode
 
-        # ── 3. Budget Pre-Check + Reservation ────────────────────────────────
+        # ── 3. Semantic Cache Lookup (Phase 9B) ────────────────────────────
+        # Rate limiting already applied (cache hits count as requests).
+        # Budget reservation intentionally deferred — cache hits cost $0.
+        if semantic_cache is not None and context:
+            cached_response = await semantic_cache.lookup(request, context)
+            if cached_response is not None:
+                cached_response.metadata.rate_limit_remaining = rate_limit_remaining
+                cached_response.metadata.request_id = request_id
+                return cached_response  # short-circuit: no budget, routing, or provider
+
+        # ── 4. Budget Pre-Check + Reservation ───────────────────────────────
         estimated_cost: float = 0.0
         budget_warning: bool = False
         budget_downgraded: bool = False
@@ -225,7 +243,7 @@ class ChatService:
             key_id=context.api_key_id if context else None,
         )
 
-        # ── 4. Provider Execution (Phase 3 + Phase 4) ─────────────────────────
+        # ── 5. Provider Execution (Phase 3 + Phase 4) ─────────────────────────
         actual_cost: float = 0.0
         response: Optional[ChatCompletionResponse] = None
 
@@ -253,7 +271,7 @@ class ChatService:
                     )
             raise
 
-        # ── 5. Actual Cost + Budget Reconciliation ────────────────────────────
+        # ── 6. Actual Cost + Budget Reconciliation ────────────────────────────
         remaining_budget: Optional[float] = None
 
         if context and budget_service and cost_calculator and estimated_cost >= 0:
@@ -277,13 +295,20 @@ class ChatService:
             if reconciled_budget and getattr(s, "budget_expose_remaining", False):
                 remaining_budget = reconciled_budget.remaining_amount
 
-        # ── 6. Attach Phase 6 Metadata to Response ────────────────────────────
+        # ── 7. Attach Phase 6 + 9B Metadata to Response ─────────────────────
         response.metadata.estimated_cost = round(estimated_cost, 8) if estimated_cost else None
         response.metadata.actual_cost = round(actual_cost, 8) if actual_cost else None
         response.metadata.remaining_budget = remaining_budget
         response.metadata.budget_warning = budget_warning
         response.metadata.budget_downgraded = budget_downgraded
         response.metadata.rate_limit_remaining = rate_limit_remaining
+        # cache_hit stays False — this is a normal provider response
+
+        # ── 8. Trigger cache write (Phase 9B) ─────────────────────────────
+        # Non-blocking fire-and-forget; cache failures never affect the response.
+        if semantic_cache is not None and context:
+            import asyncio
+            asyncio.ensure_future(semantic_cache.store(request, context, response))
 
         return response
 

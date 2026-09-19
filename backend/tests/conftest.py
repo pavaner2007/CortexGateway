@@ -30,6 +30,7 @@ def client() -> TestClient:
     # Patch init_db and init_redis so the lifespan startup does not attempt
     # real network connections during tests.
     # Phase 9A: also patch catalog init + refresh loop.
+    # Phase 9B: also patch _semantic_cache initialization.
     with (
         patch("app.main.init_db"),
         patch("app.main.init_redis"),
@@ -37,6 +38,7 @@ def client() -> TestClient:
         patch("app.main.close_redis", new_callable=AsyncMock),
         patch("app.main._init_model_catalog", new_callable=AsyncMock),
         patch("app.main._catalog_refresh_loop", new_callable=AsyncMock),
+        patch("app.main.build_semantic_cache", return_value=None),
     ):
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c

@@ -41,9 +41,14 @@ from app.exceptions import register_exception_handlers
 from app.middleware.logging import RequestLoggingMiddleware
 from app.middleware.request_id import RequestIDMiddleware
 from app.providers.registry import registry
+from app.semantic_cache.cache import SemanticCache, build_semantic_cache
 from app.utils.redis_client import close_redis, init_redis
 
 settings = get_settings()
+
+# Phase 9B: module-level semantic cache singleton
+# Populated during lifespan startup; None until then.
+_semantic_cache: SemanticCache | None = None
 
 
 def _init_providers() -> None:
@@ -214,6 +219,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Phase 9A — start background catalog refresh every 60 s
     import asyncio
     refresh_task = asyncio.create_task(_catalog_refresh_loop())
+
+    # Phase 9B — initialize semantic cache singleton
+    global _semantic_cache
+    from app.utils.redis_client import _redis_client  # available after init_redis()
+    _semantic_cache = build_semantic_cache(redis=_redis_client, settings=settings)
+    logger.info(
+        "Semantic cache initialized",
+        enabled=settings.semantic_cache_enabled,
+        version=settings.semantic_cache_version,
+        embedding_model=settings.semantic_cache_embedding_model,
+    )
 
     logger.info("Application startup complete")
     yield
