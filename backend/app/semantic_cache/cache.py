@@ -175,10 +175,11 @@ class SemanticCache:
         except Exception:
             pass
 
-        if not self._redis:
+        if (redis := self._redis) is None:
             return None
+        # redis is narrowed to Redis (non-optional) from here onward
 
-        # ── Generate query embedding ─────────────────────────────────────────
+        # ── Generate query embedding ───────────────────────────────────────
         text = extract_embedding_text(request)
         try:
             query_embedding = await self._get_embedding(text)
@@ -192,10 +193,10 @@ class SemanticCache:
 
         config_hash = build_config_hash(request)
 
-        # ── Scan candidate entries ───────────────────────────────────────────
+        # ── Scan candidate entries ───────────────────────────────────────
         try:
             index_key = self._index_key(team_id)
-            entry_ids: list[str] = await self._redis.lrange(index_key, 0, -1)
+            entry_ids = await redis.lrange(index_key, 0, -1)  # type: ignore[misc]
         except Exception as exc:
             logger.warning(
                 "Semantic cache: Redis index read failed — treating as miss",
@@ -210,7 +211,7 @@ class SemanticCache:
         for entry_id in entry_ids:
             entry_key = self._entry_key(team_id, entry_id)
             try:
-                raw = await self._redis.hgetall(entry_key)
+                raw = await redis.hgetall(entry_key)  # type: ignore[misc]
             except Exception:
                 continue  # stale or deleted entry — skip
 
