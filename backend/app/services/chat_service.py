@@ -47,6 +47,8 @@ if TYPE_CHECKING:
     from app.auth.schemas import RequestContext
 
 from app.core.logging import logger
+from app.experiment.assigner import ExperimentAssigner
+from app.experiment.schemas import ExperimentAssignment
 from app.providers.registry import ProviderRegistry
 from app.reliability.executor import ReliabilityExecutor
 from app.routing.candidates import CandidateBuilder
@@ -217,7 +219,38 @@ class ChatService:
             if cached_response is not None:
                 cached_response.metadata.rate_limit_remaining = rate_limit_remaining
                 cached_response.metadata.request_id = request_id
+                # Phase 9D: cache hits bypass experiment assignment — no arm recorded.
+                # cached_response.metadata.experiment_* fields remain None.
                 return cached_response  # short-circuit: no budget, routing, or provider
+
+        # ── 2.5 Experiment Assignment (Phase 9D) ─────────────────────────────
+        # Runs ONLY on cache MISS (cache hits returned above).
+        # Overrides target_provider/model with the assigned arm's provider/model.
+        # The ExperimentAssignment is stored separately so the assigned arm_name
+        # is preserved in the log even if Phase 4 failover routes to a different
+        # provider/model.
+        experiment_assignment: Optional[ExperimentAssignment] = None
+        experiment_cfg = getattr(policy, "experiment", None)
+        if experiment_cfg is not None and context is not None:
+            experiment_assignment = ExperimentAssigner.assign(
+                team_id=context.team_id or "",
+                request_id=request_id,
+                experiment=experiment_cfg,
+            )
+            if experiment_assignment is not None:
+                logger.info(
+                    "Experiment arm assigned — overriding routing target",
+                    request_id=request_id,
+                    experiment_id=experiment_assignment.experiment_id,
+                    experiment_version=experiment_assignment.experiment_version,
+                    arm_name=experiment_assignment.arm_name,
+                    assigned_provider=experiment_assignment.provider,
+                    assigned_model=experiment_assignment.model,
+                    original_provider=target_provider_name,
+                    original_model=target_model_name,
+                )
+                target_provider_name = experiment_assignment.provider
+                target_model_name = experiment_assignment.model
 
         # ── 4. Budget Pre-Check + Reservation ───────────────────────────────
         estimated_cost: float = 0.0
@@ -330,13 +363,20 @@ class ChatService:
             if reconciled_budget and getattr(s, "budget_expose_remaining", False):
                 remaining_budget = reconciled_budget.remaining_amount
 
-        # ── 7. Attach Phase 6 + 9B Metadata to Response ─────────────────────
+        # ── 7. Attach Phase 6 + 9B + 9D Metadata to Response ────────────────
         response.metadata.estimated_cost = round(estimated_cost, 8) if estimated_cost else None
         response.metadata.actual_cost = round(actual_cost, 8) if actual_cost else None
         response.metadata.remaining_budget = remaining_budget
         response.metadata.budget_warning = budget_warning
         response.metadata.budget_downgraded = budget_downgraded
         response.metadata.rate_limit_remaining = rate_limit_remaining
+        # Phase 9D: attach experiment assignment metadata.
+        # experiment_arm = ASSIGNED arm (not the actual serving provider).
+        # selected_provider/model in metadata = ACTUAL serving provider (set by executor).
+        if experiment_assignment is not None:
+            response.metadata.experiment_id = experiment_assignment.experiment_id
+            response.metadata.experiment_version = experiment_assignment.experiment_version
+            response.metadata.experiment_arm = experiment_assignment.arm_name
         # cache_hit stays False — this is a normal provider response
 
         # ── 8. Trigger cache write (Phase 9B) ─────────────────────────────

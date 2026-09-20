@@ -134,6 +134,15 @@ class RequestLog(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
 
+    # ── Experiment (Phase 9D) ─────────────────────────────────────────────────
+    # Null for requests without an active experiment or for cache hits.
+    # experiment_arm = arm ASSIGNED by the experiment.
+    # provider/model = provider/model that ACTUALLY served the request.
+    # These can differ when Phase 4 failover routes away from the assigned arm.
+    experiment_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    experiment_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    experiment_arm: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     # ── Timestamp ────────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now_utc

@@ -1,5 +1,5 @@
-"""
-Cortex Gateway — Policy Engine Schemas (Phase 9C).
+﻿"""
+Cortex Gateway — Policy Engine Schemas (Phase 9C + 9D).
 
 Defines the declarative team policy structure and the global default policy.
 
@@ -19,103 +19,161 @@ Accepted values:
   fallback.enabled : bool
   budget.action    : BLOCK | WARN | DOWNGRADE  (normalised to upper-case)
   cache.enabled    : bool
+
+Phase 9D additions:
+  experiment.enabled : bool
+  experiment.id      : str
+  experiment.version : int
+  experiment.type    : ab_test | canary
+  experiment.arms    : list of ExperimentArm (min 2, unique names, sum==100)
 """
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
-
-
-# ── Section schemas ───────────────────────────────────────────────────────────
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class RoutingPolicy(BaseModel):
-    """Routing section of a team policy."""
-
     model_config = ConfigDict(extra="forbid")
-
-    strategy: Literal[
-        "manual",
-        "auto",
-        "lowest_cost",
-        "lowest_latency",
-        "best_available",
-        "capability_based",
-    ] = "auto"
+    strategy: Literal["manual","auto","lowest_cost","lowest_latency","best_available","capability_based"] = "auto"
 
 
 class FallbackPolicy(BaseModel):
-    """Fallback/failover section of a team policy."""
-
     model_config = ConfigDict(extra="forbid")
-
     enabled: bool = True
 
 
 class BudgetPolicySection(BaseModel):
-    """Budget action section of a team policy."""
-
     model_config = ConfigDict(extra="forbid")
-
     action: Literal["BLOCK", "WARN", "DOWNGRADE"] = "BLOCK"
 
     @field_validator("action", mode="before")
     @classmethod
     def normalise_action(cls, v: object) -> str:
-        """Accept any case; store as upper-case."""
         if isinstance(v, str):
             return v.strip().upper()
         raise ValueError(f"budget.action must be a string, got {type(v).__name__}")
 
 
 class CachePolicy(BaseModel):
-    """Semantic cache section of a team policy."""
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
 
+
+class ExperimentArm(BaseModel):
+    """Single traffic arm in an A/B or canary experiment."""
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False  # mirrors SEMANTIC_CACHE_ENABLED default (False)
+    name: str
+    provider: str
+    model: str
+    weight: int
+
+    @field_validator("weight")
+    @classmethod
+    def weight_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"arm weight must be > 0, got {v}")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("arm name must not be empty")
+        return v.strip()
+
+    @field_validator("provider")
+    @classmethod
+    def provider_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("arm provider must not be empty")
+        return v.strip().lower()
+
+    @field_validator("model")
+    @classmethod
+    def model_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("arm model must not be empty")
+        return v.strip()
 
 
-# ── Input schema (partial — for PUT body) ─────────────────────────────────────
+class ExperimentConfig(BaseModel):
+    """
+    Phase 9D experiment configuration stored in the team policy JSONB.
+
+    Validation rules:
+      - Minimum 2 arms.
+      - Arm names must be unique.
+      - Sum of arm weights must equal exactly 100.
+      - type is "ab_test" or "canary" (same algorithm, different semantics).
+
+    version:
+      Included in SHA-256 hash input. Admin must increment when changing
+      arms/weights/providers to distinguish old vs new configuration in logs.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    id: str
+    version: int = 1
+    type: Literal["ab_test", "canary"]
+    arms: List[ExperimentArm]
+
+    @field_validator("id")
+    @classmethod
+    def id_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("experiment.id must not be empty")
+        return v.strip()
+
+    @field_validator("version")
+    @classmethod
+    def version_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("experiment.version must be >= 1")
+        return v
+
+    @model_validator(mode="after")
+    def validate_arms(self) -> "ExperimentConfig":
+        arms = self.arms
+        if len(arms) < 2:
+            raise ValueError(f"experiment must have at least 2 arms, got {len(arms)}")
+        names = [a.name for a in arms]
+        if len(names) != len(set(names)):
+            dupes = [n for n in names if names.count(n) > 1]
+            raise ValueError(f"duplicate arm names in experiment: {sorted(set(dupes))}")
+        total = sum(a.weight for a in arms)
+        if total != 100:
+            raise ValueError(
+                f"sum of arm weights must equal 100, got {total} "
+                f"({' + '.join(str(a.weight) for a in arms)})"
+            )
+        return self
 
 
 class TeamPolicyInput(BaseModel):
     """
     Input schema for PUT /api/v1/teams/{team_id}/policy.
-
-    All sections are optional — an admin may supply only the sections they
-    want to override.  Unspecified sections inherit from the global default.
-
-    Strict: extra fields are forbidden so that typos like "routng" return a
-    clear validation error instead of being silently ignored.
+    All sections optional. Extra fields forbidden.
+    Phase 9D: experiment section is optional.
     """
-
     model_config = ConfigDict(extra="forbid")
 
     routing: Optional[RoutingPolicy] = None
     fallback: Optional[FallbackPolicy] = None
     budget: Optional[BudgetPolicySection] = None
     cache: Optional[CachePolicy] = None
-
-
-# ── Resolved (fully merged) schema ────────────────────────────────────────────
+    experiment: Optional[ExperimentConfig] = None
 
 
 class ResolvedPolicy(BaseModel):
     """
-    Fully-merged, immutable policy produced by PolicyResolver.
-
-    All sections are always present.  Downstream services (ChatService,
-    RoutingEngine, ReliabilityExecutor, SemanticCache) receive this object
-    and never need to handle Optional sections.
-
-    source:
-      "global" — no team override; global default used.
-      "team"   — at least one section came from the team's stored policy.
+    Fully-merged immutable policy from PolicyResolver.
+    Phase 9D: experiment=None means no active experiment.
     """
-
     model_config = ConfigDict(frozen=True)
 
     routing: RoutingPolicy
@@ -123,14 +181,14 @@ class ResolvedPolicy(BaseModel):
     budget: BudgetPolicySection
     cache: CachePolicy
     source: Literal["global", "team"]
+    experiment: Optional[ExperimentConfig] = None
 
-
-# ── Global default ─────────────────────────────────────────────────────────────
 
 GLOBAL_DEFAULT_POLICY = ResolvedPolicy(
-    routing=RoutingPolicy(strategy="auto"),       # settings.routing_default_mode
-    fallback=FallbackPolicy(enabled=True),         # request.failover_enabled default
-    budget=BudgetPolicySection(action="BLOCK"),    # Budget.policy default / budget_default_policy
-    cache=CachePolicy(enabled=False),              # SEMANTIC_CACHE_ENABLED default
+    routing=RoutingPolicy(strategy="auto"),
+    fallback=FallbackPolicy(enabled=True),
+    budget=BudgetPolicySection(action="BLOCK"),
+    cache=CachePolicy(enabled=False),
     source="global",
+    experiment=None,
 )

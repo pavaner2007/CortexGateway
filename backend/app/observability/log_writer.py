@@ -45,7 +45,10 @@ async def write_request_log(log_data: Dict[str, Any]) -> None:
             "retry_count", "failover_triggered", "failover_from_provider",
             "failover_to_provider", "circuit_breaker_state",
             "budget_policy_applied", "budget_action",
-            "cache_hit",  # Phase 9B
+            "cache_hit",         # Phase 9B
+            "experiment_id",     # Phase 9D
+            "experiment_version",
+            "experiment_arm",
         }
         safe = {k: v for k, v in log_data.items() if k in allowed}
 
@@ -81,7 +84,10 @@ def build_success_log(
     response,  # ChatCompletionResponse
     trace_id: Optional[str] = None,
     budget_policy: Optional[str] = None,
-    cache_hit: bool = False,  # Phase 9B
+    cache_hit: bool = False,        # Phase 9B
+    experiment_id: Optional[str] = None,       # Phase 9D
+    experiment_version: Optional[int] = None,  # Phase 9D
+    experiment_arm: Optional[str] = None,      # Phase 9D
 ) -> Dict[str, Any]:
     """
     Build the log_data dict from a successful ChatCompletionResponse.
@@ -127,7 +133,10 @@ def build_success_log(
             else "none"
         ),
         "error_code": None,
-        "cache_hit": cache_hit,  # Phase 9B
+        "cache_hit": cache_hit,          # Phase 9B
+        "experiment_id": experiment_id,          # Phase 9D
+        "experiment_version": experiment_version,
+        "experiment_arm": experiment_arm,
     }
 
 

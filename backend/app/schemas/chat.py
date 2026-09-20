@@ -224,6 +224,22 @@ class ResponseMetadata(BaseModel):
         False,
         description="True if this response was served from the semantic cache (no provider call made).",
     )
+    # ── Phase 9D: Experiment metadata ───────────────────────────────
+    experiment_id: Optional[str] = Field(
+        None,
+        description="Experiment ID assigned to this request. Null for non-experiment and cache-hit requests.",
+    )
+    experiment_version: Optional[int] = Field(
+        None,
+        description="Experiment version at the time of assignment.",
+    )
+    experiment_arm: Optional[str] = Field(
+        None,
+        description=(
+            "Arm name assigned by the experiment. "
+            "May differ from selected_provider/model if Phase 4 failover occurred."
+        ),
+    )
 
 
 class ChatCompletionResponse(BaseModel):

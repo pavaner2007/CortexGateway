@@ -95,6 +95,8 @@ class PolicyResolver:
         fallback = partial.fallback if partial.fallback is not None else g.fallback
         budget = partial.budget if partial.budget is not None else g.budget
         cache = partial.cache if partial.cache is not None else g.cache
+        # Phase 9D: experiment is pass-through — use team's value (may be None)
+        experiment = partial.experiment  # None means no active experiment
 
         resolved = ResolvedPolicy(
             routing=routing,
@@ -102,6 +104,7 @@ class PolicyResolver:
             budget=budget,
             cache=cache,
             source="team",
+            experiment=experiment,
         )
 
         logger.debug(

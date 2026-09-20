@@ -308,7 +308,10 @@ async def chat_completions(
                 response=response,
                 trace_id=get_current_trace_id(),
                 budget_policy=budget_policy,
-                cache_hit=meta.cache_hit,  # Phase 9B
+                cache_hit=meta.cache_hit,          # Phase 9B
+                experiment_id=meta.experiment_id,          # Phase 9D
+                experiment_version=meta.experiment_version,
+                experiment_arm=meta.experiment_arm,
             )
             background_tasks.add_task(write_request_log, log_data)
         except Exception:
