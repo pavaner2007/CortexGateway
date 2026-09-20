@@ -167,7 +167,7 @@ Your Application
   - `GET /api/v1/analytics/budget-events` — BLOCK / WARN / DOWNGRADE event counts
   - `GET /api/v1/analytics/timeseries` — time-bucketed request/cost/error (hour/day/week)
 - **Prometheus + Grafana** — included in Docker Compose; Prometheus scrapes `/metrics` every 15 s; Grafana at port 3000 for dashboard creation
-- **294 automated tests** — 294/294 passing; zero real API credits required
+- **349 automated tests** — 349/349 passing; zero real API credits required
 
 ### Admin Dashboard ✅
 - **Single-page React Admin Dashboard** (`frontend/`) — operator interface for everything built in Phases 1–7
@@ -193,7 +193,36 @@ Your Application
 - **Alembic Migration** — `0005_phase9a_model_registry.py` creates the table and seeds 15 production-ready model entries (Gemini, Groq, Ollama)
 - **326 automated tests** — 326/326 passing; 32 new Phase 9A tests covering CRUD, RBAC, validation, Phase 3/6 integration, and all Ollama intersection cases
 
----
+### Phase 9B — Semantic Caching ✅
+- **Redis-Backed Vector Cache** — embeddings generated at request time; cosine-similarity lookup with configurable threshold (`SEMANTIC_CACHE_SIMILARITY_THRESHOLD`, default 0.92); cache hit returns stored response in < 5 ms with no provider call
+- **Cache Miss Path** — on miss the response is written back to Redis in the background (non-blocking) for future hits
+- **Team-Scoped Cache Keys** — cache entries are namespaced per team so different teams never share cached responses
+- **Policy-Controlled** — cache enabled/disabled per team via `CachePolicy` section of the Phase 9C policy engine; global default is disabled
+- **Cache Metadata** — `cache_hit: bool` field on every `ResponseMetadata`; `RequestLog.cache_hit` column persisted for analytics
+- **Alembic Migration** — `0006_phase9b_semantic_cache.py`
+
+### Phase 9C — Policy Engine ✅
+- **Declarative Team Policy** — single `PUT /api/v1/teams/{team_id}/policy` endpoint (JSON or YAML body) replaces ad-hoc per-team configuration; supports partial overrides (unspecified sections inherit global defaults)
+- **Four Policy Sections** — `routing` (strategy), `fallback` (enabled), `budget` (action: BLOCK/WARN/DOWNGRADE), `cache` (enabled) — all resolved once per request via `PolicyResolver`
+- **Strict Validation** — Pydantic `extra="forbid"` on all policy schemas; typos like `"routng"` return 422, not silent ignore
+- **Global Default Policy** — `GLOBAL_DEFAULT_POLICY` constant defines gateway-wide fallback; team policy merges on top
+- **Fail-Open DB Fallback** — if the policy DB lookup fails, the request continues with the global default (logged as warning)
+- **RBAC Enforced** — PUT/GET/DELETE all require admin role; org isolation enforced by `_resolve_team`
+- **Alembic Migration** — `0007_phase9c_team_policies.py` (JSONB `policy` column on `team_policies` table)
+
+### Phase 9D — A/B Testing & Canary ✅
+- **Deterministic Traffic Splitting** — `ExperimentAssigner` uses SHA-256(`team_id:experiment_id:version:request_id`) → mod 10,000 bucket → arm; no shared state, no random.random(), pure integer arithmetic
+- **Two Experiment Types** — `ab_test` (equal or split traffic) and `canary` (asymmetric e.g. 95/5); same algorithm, different semantics
+- **Experiment Configuration via Policy API** — experiment block added to the existing `PUT /teams/{id}/policy` body; no new endpoint required
+- **Strict Schema Validation** — `sum(weights)==100`, min 2 arms, unique arm names, weight > 0, version ≥ 1; all enforced at Pydantic schema level
+- **Config-Time Provider Validation** — PUT rejects arms with unregistered providers (HTTP 422 with available providers listed)
+- **Pipeline Insertion Point** — step 2.5 in `ChatService.complete()`: after cache MISS, before budget pre-check; cache hits bypass experiment entirely
+- **Arm vs. Actual Provider Distinction** — `experiment_arm` = assigned arm name (stored before Phase 4 execute); `provider/model` = actual serving provider (may differ on failover)
+- **Version-Aware Reshuffling** — incrementing `experiment.version` changes the hash input and reshuffles traffic distribution
+- **Fail-Open Assignment** — any internal assigner error returns `None` (no assignment); request proceeds with original routing target
+- **Full Observability** — `experiment_id`, `experiment_version`, `experiment_arm` in `ResponseMetadata`, `RequestLog`, and analytics
+- **Alembic Migration** — `0008_phase9d_experiment_log.py` adds 3 nullable columns + index to `request_logs`
+- **49 automated tests** — distribution tolerance tests (50/50 over 1000 requests, 95/5 over 2000), determinism, version change, schema validation (weights, arms, types), cache-hit bypass, failover semantics, RBAC, org isolation, policy regression
 
 ## Quick Start
 
@@ -277,7 +306,7 @@ pytest tests/ -v
 ```
 
 ```
-326 passed in 4.60s
+349 passed in ~5s
 ```
 
 No Docker needed — all external dependencies are mocked.
@@ -784,6 +813,11 @@ POST /api/v1/chat/completions
         │
         ▼
 ┌──────────────────────────┐
+│  0. Policy Resolution    │  PolicyResolver → ResolvedPolicy (routing/fallback/budget/cache/experiment)
+└──────────┬───────────────┘  DB lookup once per request; fail-open to global default
+           │
+        ▼
+┌──────────────────────────┐
 │  1. Authentication       │  Bearer cxg_... → RequestContext (org/team/key/role)
 └──────────┬───────────────┘
            │
@@ -794,43 +828,54 @@ POST /api/v1/chat/completions
            │
         ▼
 ┌──────────────────────────┐
-│  3. Budget Pre-Check     │  PostgreSQL SELECT FOR UPDATE + estimated_cost
-└──────────┬───────────────┘  → 402 BUDGET_EXCEEDED (BLOCK) or downgrade candidate
-           │                    selected (DOWNGRADE)
-        ▼
-┌──────────────────────────┐
-│  4. Routing Engine       │  Multi-factor scoring across health, latency, cost
+│  3. Routing Engine       │  Multi-factor scoring → initial target_provider/model
 └──────────┬───────────────┘
            │
         ▼
 ┌──────────────────────────┐
-│  5. Reliability Executor │  Retries + circuit breaker + automated failover
+│  4. Semantic Cache       │  Redis vector similarity lookup (Phase 9B)
+└──────────┬───────────────┘  HIT → return immediately (no experiment, no budget)
+           │ MISS
+        ▼
+┌──────────────────────────┐
+│  5. Experiment Assign    │  SHA-256 hash → bucket → arm → override provider/model (Phase 9D)
+└──────────┬───────────────┘  Disabled/absent experiment → skip
+           │
+        ▼
+┌──────────────────────────┐
+│  6. Budget Pre-Check     │  PostgreSQL SELECT FOR UPDATE + estimated_cost
+└──────────┬───────────────┘  → 402 BUDGET_EXCEEDED (BLOCK) or downgrade (DOWNGRADE)
+           │
+        ▼
+┌──────────────────────────┐
+│  7. Reliability Executor │  Retries + circuit breaker + automated failover
 └──────────┬───────────────┘
            │
         ▼
 ┌──────────────────────────┐
-│  6. Provider Adapter     │  Gemini / Groq / Ollama
+│  8. Provider Adapter     │  Gemini / Groq / Ollama
 └──────────┬───────────────┘
            │
         ▼
 ┌──────────────────────────┐
-│  7. Actual Cost Calc     │  actual_tokens × split input/output pricing
+│  9. Actual Cost Calc     │  actual_tokens × split input/output pricing
 └──────────┬───────────────┘
            │
         ▼
 ┌──────────────────────────┐
-│  8. Budget Reconcile     │  reserved -= estimated; usage += actual
+│  10. Budget Reconcile    │  reserved -= estimated; usage += actual
 └──────────┬───────────────┘  (released without charge on provider failure)
            │
         ▼
     ChatCompletionResponse
-    (with cost + budget metadata)
+    (cost + budget + cache + experiment metadata)
            │
         ▼  [Background — non-blocking]
 ┌──────────────────────────┐
-│  9. Observability        │  RequestLog row → PostgreSQL (own session)
+│  11. Observability       │  RequestLog row → PostgreSQL (own session)
 └──────────────────────────┘  Prometheus counters incremented
                               OTel span closed (if enabled)
+                              Cache write (on miss, Phase 9B)
 ```
 
 ---
@@ -848,7 +893,10 @@ CortexGateway/
 │   │       ├── 0002_phase6_budgets.py          # budgets table with reserved column
 │   │       ├── 0003_phase6_team_rate_limits.py # per-team rate limit overrides table
 │   │       ├── 0004_phase7_request_logs.py     # request_logs table (observability)
-│   │       └── 0005_phase9a_model_registry.py  # model_registry table + 15 seed entries
+│   │       ├── 0005_phase9a_model_registry.py  # model_registry table + 15 seed entries
+│   │       ├── 0006_phase9b_semantic_cache.py  # semantic_cache_entries table
+│   │       ├── 0007_phase9c_team_policies.py   # team_policies table (JSONB policy column)
+│   │       └── 0008_phase9d_experiment_log.py  # experiment_id/version/arm columns on request_logs
 │   ├── alembic.ini                    # Alembic config
 │   ├── app/
 │   │   ├── api/v1/endpoints/
@@ -863,6 +911,7 @@ CortexGateway/
 │   │   │   ├── rate_limits.py         # Per-team rate limit overrides (admin only)
 │   │   │   ├── analytics.py           # GET /api/v1/analytics/* (admin only, org-scoped)
 │   │   │   ├── model_registry.py      # GET/POST/PATCH/DELETE /api/v1/models (admin, Phase 9A)
+│   │   │   ├── policy.py              # GET/PUT/DELETE /api/v1/teams/{id}/policy (admin, Phase 9C)
 │   │   │   └── metrics.py             # GET /metrics (Prometheus exposition)
 │   │   ├── auth/                      # Auth & Multi-Tenancy
 │   │   │   ├── dependencies.py        # get_request_context, require_admin
@@ -881,6 +930,19 @@ CortexGateway/
 │   │   │   ├── limiter.py             # RateLimiter (sliding-window Lua atomic script)
 │   │   │   ├── team_limits.py         # TeamRateLimit ORM + TeamRateLimitService
 │   │   │   └── models.py              # RateLimitResult, RateLimitOutcome
+│   │   ├── experiment/                # Phase 9D — A/B Testing & Canary
+│   │   │   ├── __init__.py
+│   │   │   ├── assigner.py            # ExperimentAssigner (SHA-256 → bucket → arm)
+│   │   │   └── schemas.py             # ExperimentAssignment immutable dataclass
+│   │   ├── policy/                    # Phase 9C — Policy Engine
+│   │   │   ├── __init__.py
+│   │   │   ├── schemas.py             # RoutingPolicy, FallbackPolicy, ExperimentConfig…
+│   │   │   ├── resolver.py            # PolicyResolver (merge team + global default)
+│   │   │   ├── service.py             # PolicyService (upsert/get/delete)
+│   │   │   └── models.py              # TeamPolicy ORM (JSONB)
+│   │   ├── semantic_cache/            # Phase 9B — Semantic Caching
+│   │   │   ├── __init__.py
+│   │   │   └── cache.py               # SemanticCache (embeddings + Redis cosine similarity)
 │   │   ├── config/
 │   │   │   └── settings.py            # Pydantic Settings v2 (all phases)
 │   │   ├── core/
@@ -922,11 +984,11 @@ CortexGateway/
 │   │   │   └── models.py              # ReliabilityContext, AttemptRecord
 │   │   ├── schemas/
 │   │   │   ├── responses.py           # Shared Pydantic v2 response models
-│   │   │   └── chat.py                # Chat request/response + cost/budget metadata
+│   │   │   └── chat.py                # Chat request/response + cost/budget/experiment metadata
 │   │   ├── services/
-│   │   │   └── chat_service.py        # ChatService — full request pipeline
+│   │   │   └── chat_service.py        # ChatService — full request pipeline (Phases 1–9D)
 │   │   ├── observability/             # Phase 7 — Observability
-│   │   │   ├── models.py              # RequestLog ORM (23 columns, 10 indexes)
+│   │   │   ├── models.py              # RequestLog ORM (+ experiment columns, Phase 9D)
 │   │   │   ├── metrics.py             # 9 Prometheus metrics (zero high-cardinality labels)
 │   │   │   ├── tracing.py             # OTel init + safe_span() context manager
 │   │   │   ├── log_writer.py          # Async background RequestLog writer
@@ -951,7 +1013,10 @@ CortexGateway/
 │   │   ├── test_team_rate_limits.py       # Per-team rate limit override tests
 │   │   ├── test_observability.py          # Observability: metrics, log writer, analytics RBAC, cardinality guard
 │   │   ├── test_phase8_backend.py         # Phase 8 backend additions (/auth/me, request_id filter)
-│   │   └── test_phase9a_model_registry.py # Phase 9A: CRUD, RBAC, Ollama intersection, catalog wiring
+│   │   ├── test_phase9a_model_registry.py # Phase 9A: CRUD, RBAC, Ollama intersection, catalog wiring
+│   │   ├── test_phase9b_semantic_cache.py # Phase 9B: cache lookup, miss, hit, team isolation
+│   │   ├── test_phase9c_policy.py         # Phase 9C: policy CRUD, resolver merge, fallback, RBAC
+│   │   └── test_phase9d_experiment.py     # Phase 9D: distribution, determinism, validation, failover semantics
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
@@ -993,10 +1058,10 @@ CortexGateway/
 | 7 | Observability & Analytics | ✅ **Done** |
 | 8 | Admin Dashboard | ✅ **Done** |
 | 9A | Model Registry | ✅ **Done** |
-| 9B | Semantic Caching | 🔜 Next |
-| 9C | Policy Engine | Planned |
-| 9D | A/B Testing & Canary | Planned |
-| 9E | Guardrails | Planned |
+| 9B | Semantic Caching | ✅ **Done** |
+| 9C | Policy Engine | ✅ **Done** |
+| 9D | A/B Testing & Canary | ✅ **Done** |
+| 9E | Guardrails | 🔜 Next |
 
 ---
 

@@ -10,9 +10,15 @@ Configures:
 - API router registration
 - Swagger / ReDoc documentation
 
-Phase 2: Provider registry + chat/provider routers
-Phase 5: Bootstrap, organizations, teams, API key routers
-Phase 7: Prometheus metrics endpoint, analytics routers, OTel tracing init
+Phase 2:  Provider registry + chat/provider routers
+Phase 5:  Bootstrap, organizations, teams, API key routers
+Phase 6:  Rate limiting and budget management
+Phase 7:  Prometheus metrics endpoint, analytics routers, OTel tracing init
+Phase 8:  Admin dashboard backend APIs
+Phase 9A: Model Registry — DB-backed catalog with admin CRUD and shared metadata
+Phase 9B: Semantic Caching — Redis-backed vector similarity cache for chat responses
+Phase 9C: Policy Engine — declarative team policy (routing, fallback, budget, cache)
+Phase 9D: A/B Testing & Canary — deterministic SHA-256 traffic splitting across model arms
 """
 
 from contextlib import asynccontextmanager
