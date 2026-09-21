@@ -27,6 +27,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.auth.exceptions import AuthenticationError, AuthorizationError
 from app.budget.exceptions import BudgetExceeded, RateLimitExceeded
 from app.core.logging import logger
+from app.guardrails.exceptions import GuardrailBlocked
 from app.middleware.request_id import get_request_id
 from app.providers.exceptions import ProviderException
 from app.schemas.responses import ErrorDetail, ErrorResponse
@@ -37,13 +38,17 @@ def _error_response(
     code: str,
     message: str,
     request_id: str,
+    details: object = None,
 ) -> JSONResponse:
     body = ErrorResponse(
         error=ErrorDetail(code=code, message=message, request_id=request_id)
     )
+    data = body.model_dump()
+    if details is not None:
+        data["error"]["details"] = details
     return JSONResponse(
         status_code=status_code,
-        content=body.model_dump(),
+        content=data,
     )
 
 
@@ -200,6 +205,30 @@ def register_exception_handlers(app: FastAPI) -> None:
             code=exc.code,
             message=exc.message,
             request_id=request_id,
+        )
+
+    @app.exception_handler(GuardrailBlocked)
+    async def guardrail_blocked_handler(
+        request: Request, exc: GuardrailBlocked
+    ) -> JSONResponse:
+        request_id = get_request_id()
+        logger.warning(
+            "Request blocked by guardrail",
+            request_id=request_id,
+            path=str(request.url.path),
+            guardrail=exc.guardrail,
+            reason_code=exc.reason_code,
+            guardrails_triggered=exc.guardrails_triggered,
+        )
+        return _error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=exc.code,
+            message=exc.message,
+            request_id=request_id,
+            details={
+                "guardrail": exc.guardrail,
+                "reason_code": exc.reason_code,
+            },
         )
 
     @app.exception_handler(Exception)

@@ -28,6 +28,7 @@ from app.policy.schemas import (
     CachePolicy,
     FallbackPolicy,
     GLOBAL_DEFAULT_POLICY,
+    GuardrailsPolicy,
     ResolvedPolicy,
     RoutingPolicy,
     TeamPolicyInput,
@@ -97,6 +98,8 @@ class PolicyResolver:
         cache = partial.cache if partial.cache is not None else g.cache
         # Phase 9D: experiment is pass-through — use team's value (may be None)
         experiment = partial.experiment  # None means no active experiment
+        # Phase 9E: guardrails — use team's section if set; global default (all-off) otherwise
+        guardrails = partial.guardrails if partial.guardrails is not None else g.guardrails
 
         resolved = ResolvedPolicy(
             routing=routing,
@@ -105,6 +108,7 @@ class PolicyResolver:
             cache=cache,
             source="team",
             experiment=experiment,
+            guardrails=guardrails,
         )
 
         logger.debug(

@@ -143,6 +143,17 @@ class RequestLog(Base):
     experiment_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     experiment_arm: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
+    # ── Guardrails (Phase 9E) ─────────────────────────────────────────────────
+    # Null for requests where no guardrail triggered.
+    # guardrails_triggered: JSON-encoded list of guardrail names that fired,
+    #   e.g. '["pii","injection"]'.  Stored as String for SQLite test compat.
+    #   Never contains matched values, prompt text, or PII content.
+    # guardrail_action: "warn" | "block" — the aggregate final action applied.
+    guardrails_triggered: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True
+    )
+    guardrail_action: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
     # ── Timestamp ────────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now_utc

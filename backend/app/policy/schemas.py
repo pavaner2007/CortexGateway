@@ -1,24 +1,25 @@
-﻿"""
-Cortex Gateway — Policy Engine Schemas (Phase 9C + 9D).
+"""
+Cortex Gateway -- Policy Engine Schemas (Phase 9C + 9D + 9E).
 
 Defines the declarative team policy structure and the global default policy.
 
 Design:
-  - TeamPolicy accepts partial input — only the sections a team specifies are
+  - TeamPolicy accepts partial input -- only the sections a team specifies are
     stored.  Unspecified sections fall back to the global default at resolution
     time.
-  - ResolvedPolicy is always fully populated — all sections present — so
+  - ResolvedPolicy is always fully populated -- all sections present -- so
     downstream consumers never need to handle None.
   - Extra fields are forbidden on both models so that typos in section names
     (e.g. "routng") are rejected with a validation error rather than silently
     dropped.
 
 Accepted values:
-  routing.strategy : manual | auto | lowest_cost | lowest_latency |
-                     best_available | capability_based
-  fallback.enabled : bool
-  budget.action    : BLOCK | WARN | DOWNGRADE  (normalised to upper-case)
-  cache.enabled    : bool
+  routing.strategy       : manual | auto | lowest_cost | lowest_latency |
+                           best_available | capability_based
+  fallback.enabled       : bool
+  budget.action          : BLOCK | WARN | DOWNGRADE  (normalised to upper-case)
+  cache.enabled          : bool
+  guardrails.*           : see GuardrailsPolicy
 
 Phase 9D additions:
   experiment.enabled : bool
@@ -26,6 +27,11 @@ Phase 9D additions:
   experiment.version : int
   experiment.type    : ab_test | canary
   experiment.arms    : list of ExperimentArm (min 2, unique names, sum==100)
+
+Phase 9E additions:
+  guardrails.max_prompt_length   : int | null  (null = disabled)
+  guardrails.pii_detection       : off | warn | block
+  guardrails.injection_detection : off | warn | block
 """
 
 from __future__ import annotations
@@ -60,6 +66,37 @@ class BudgetPolicySection(BaseModel):
 class CachePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = False
+
+
+class GuardrailsPolicy(BaseModel):
+    """
+    Phase 9E guardrail configuration stored in the team policy.
+
+    Defaults are deliberately permissive (all off / no limit) so that
+    existing teams without explicit guardrail configuration are unaffected.
+
+    Fields:
+        max_prompt_length:    Maximum combined Unicode character count across
+                              all messages.  None = no restriction.
+                              Measurement is len(text), NOT token count.
+        pii_detection:        off | warn | block
+                              off   -> detector does not execute.
+                              warn  -> log and continue.
+                              block -> reject request (no rate-limit/budget cost).
+        injection_detection:  off | warn | block  (same semantics as above).
+
+    Limitations (must be disclosed to operators):
+        - PII detection is pattern-based; it is not a comprehensive PII
+          classifier and will produce false positives and false negatives.
+        - Injection detection is heuristic-based; it is not a complete
+          prompt-injection defense and must not be treated as a security
+          boundary.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    max_prompt_length: Optional[int] = None
+    pii_detection: Literal["off", "warn", "block"] = "off"
+    injection_detection: Literal["off", "warn", "block"] = "off"
 
 
 class ExperimentArm(BaseModel):
@@ -159,6 +196,7 @@ class TeamPolicyInput(BaseModel):
     Input schema for PUT /api/v1/teams/{team_id}/policy.
     All sections optional. Extra fields forbidden.
     Phase 9D: experiment section is optional.
+    Phase 9E: guardrails section is optional.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -167,12 +205,14 @@ class TeamPolicyInput(BaseModel):
     budget: Optional[BudgetPolicySection] = None
     cache: Optional[CachePolicy] = None
     experiment: Optional[ExperimentConfig] = None
+    guardrails: Optional[GuardrailsPolicy] = None
 
 
 class ResolvedPolicy(BaseModel):
     """
     Fully-merged immutable policy from PolicyResolver.
     Phase 9D: experiment=None means no active experiment.
+    Phase 9E: guardrails defaults to all-off (backward compatible).
     """
     model_config = ConfigDict(frozen=True)
 
@@ -182,6 +222,7 @@ class ResolvedPolicy(BaseModel):
     cache: CachePolicy
     source: Literal["global", "team"]
     experiment: Optional[ExperimentConfig] = None
+    guardrails: GuardrailsPolicy = GuardrailsPolicy()
 
 
 GLOBAL_DEFAULT_POLICY = ResolvedPolicy(
@@ -191,4 +232,11 @@ GLOBAL_DEFAULT_POLICY = ResolvedPolicy(
     cache=CachePolicy(enabled=False),
     source="global",
     experiment=None,
+    # Phase 9E: all guardrails off by default -- backward compatible.
+    # Existing teams without guardrail config are completely unaffected.
+    guardrails=GuardrailsPolicy(
+        max_prompt_length=None,
+        pii_detection="off",
+        injection_detection="off",
+    ),
 )

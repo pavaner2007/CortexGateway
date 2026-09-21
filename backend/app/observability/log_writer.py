@@ -49,6 +49,8 @@ async def write_request_log(log_data: Dict[str, Any]) -> None:
             "experiment_id",     # Phase 9D
             "experiment_version",
             "experiment_arm",
+            "guardrails_triggered",  # Phase 9E
+            "guardrail_action",      # Phase 9E
         }
         safe = {k: v for k, v in log_data.items() if k in allowed}
 
@@ -88,6 +90,8 @@ def build_success_log(
     experiment_id: Optional[str] = None,       # Phase 9D
     experiment_version: Optional[int] = None,  # Phase 9D
     experiment_arm: Optional[str] = None,      # Phase 9D
+    guardrails_triggered: Optional[str] = None,  # Phase 9E: JSON-encoded list
+    guardrail_action: Optional[str] = None,      # Phase 9E: "warn" | "block" | None
 ) -> Dict[str, Any]:
     """
     Build the log_data dict from a successful ChatCompletionResponse.
@@ -137,6 +141,8 @@ def build_success_log(
         "experiment_id": experiment_id,          # Phase 9D
         "experiment_version": experiment_version,
         "experiment_arm": experiment_arm,
+        "guardrails_triggered": guardrails_triggered,  # Phase 9E
+        "guardrail_action": guardrail_action,          # Phase 9E
     }
 
 
@@ -152,6 +158,8 @@ def build_error_log(
     model: Optional[str] = None,
     budget_policy: Optional[str] = None,
     budget_action: Optional[str] = None,
+    guardrails_triggered: Optional[str] = None,  # Phase 9E
+    guardrail_action: Optional[str] = None,      # Phase 9E
 ) -> Dict[str, Any]:
     """
     Build the log_data dict for a failed / rejected request.
@@ -173,4 +181,6 @@ def build_error_log(
         "failover_triggered": False,
         "budget_policy_applied": budget_policy,
         "budget_action": budget_action,
+        "guardrails_triggered": guardrails_triggered,  # Phase 9E
+        "guardrail_action": guardrail_action,          # Phase 9E
     }

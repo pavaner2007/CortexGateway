@@ -29,6 +29,8 @@ from app.budget.cost import CostCalculator
 from app.budget.service import BudgetService
 from app.config.settings import Settings, get_settings
 from app.database.session import get_db_dependency
+from app.guardrails.exceptions import GuardrailBlocked
+from app.guardrails.runner import GuardrailRunner
 from app.middleware.request_id import get_request_id
 from app.providers.registry import ProviderRegistry, get_registry
 from app.rate_limit.limiter import RateLimiter
@@ -184,6 +186,55 @@ async def chat_completions(
 
     request_id = get_request_id()
 
+    # ── Phase 9E: Guardrail check ─────────────────────────────────────────────
+    # Runs BEFORE service.complete() so blocked requests never consume:
+    #   - a rate-limit slot (step 1 in ChatService)
+    #   - a budget reservation (step 4 in ChatService)
+    #   - provider capacity
+    # Policy is already resolved (resolved_policy Depends) — no extra DB call.
+    guardrail_triggered_json: str | None = None
+    guardrail_action_str: str | None = None
+
+    guardrail_run = GuardrailRunner.run(request, resolved_policy.guardrails)
+    if guardrail_run.any_triggered:
+        import json as _json
+        guardrail_triggered_json = _json.dumps(guardrail_run.triggered_names)
+        guardrail_action_str = guardrail_run.final_action
+
+    if guardrail_run.is_blocked:
+        # Determine primary blocking guardrail (first block in results list)
+        primary = next(
+            (r for r in guardrail_run.results if r.action == "block"),
+            guardrail_run.results[0] if guardrail_run.results else None,
+        )
+        primary_name = primary.guardrail if primary else "unknown"
+        primary_reason = primary.reason_code if primary else None
+
+        if settings.request_log_enabled:
+            try:
+                background_tasks.add_task(
+                    write_request_log,
+                    build_error_log(
+                        request_id=request_id,
+                        context=context,
+                        status="guardrail_blocked",
+                        http_status_code=400,
+                        error_code="INVALID_REQUEST",
+                        trace_id=get_current_trace_id(),
+                        guardrails_triggered=guardrail_triggered_json,
+                        guardrail_action="block",
+                    ),
+                )
+            except Exception:
+                pass
+
+        raise GuardrailBlocked(
+            guardrail=primary_name,
+            guardrails_triggered=guardrail_run.triggered_names,
+            reason_code=primary_reason,
+            message="Request blocked by guardrail.",
+        )
+
     # ── Run the core pipeline ─────────────────────────────────────────────────
     # Any exception here is caught, logged (non-blocking), and re-raised.
     # The exception handler chain produces the final HTTP error response.
@@ -312,6 +363,8 @@ async def chat_completions(
                 experiment_id=meta.experiment_id,          # Phase 9D
                 experiment_version=meta.experiment_version,
                 experiment_arm=meta.experiment_arm,
+                guardrails_triggered=guardrail_triggered_json,  # Phase 9E
+                guardrail_action=guardrail_action_str,           # Phase 9E
             )
             background_tasks.add_task(write_request_log, log_data)
         except Exception:
