@@ -38,11 +38,8 @@ IMPORTANT:
 """
 
 import os
-import json
-import random
-from locust import HttpUser, task, between, events
-from locust.runners import MasterRunner
 
+from locust import HttpUser, between, events, task
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 API_KEY    = os.getenv("CORTEX_API_KEY", "")

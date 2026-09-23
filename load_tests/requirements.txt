@@ -1,0 +1,3 @@
+# Cortex Gateway — Load Test Dependencies
+# Install: pip install -r load_tests/requirements.txt
+locust>=2.31.0
