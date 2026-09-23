@@ -8,8 +8,6 @@ the RequestLog entry without exposing any prompt content or matched values.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 
 class GuardrailBlocked(Exception):
     """
@@ -31,8 +29,8 @@ class GuardrailBlocked(Exception):
     def __init__(
         self,
         guardrail: str,
-        guardrails_triggered: List[str],
-        reason_code: Optional[str] = None,
+        guardrails_triggered: list[str],
+        reason_code: str | None = None,
         message: str = "Request blocked by guardrail.",
     ) -> None:
         self.guardrail = guardrail

@@ -12,8 +12,8 @@ No domain models are created here — this module is purely connection
 infrastructure and is intentionally kept free of business-logic tables.
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (

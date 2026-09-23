@@ -13,7 +13,7 @@ Defines scoring weight configurations for all supported routing modes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+
 from app.routing.models import RoutingMode
 
 
@@ -26,7 +26,7 @@ class PolicyWeights:
 
 
 # Default policy weight profiles
-_POLICY_WEIGHTS: Dict[RoutingMode, PolicyWeights] = {
+_POLICY_WEIGHTS: dict[RoutingMode, PolicyWeights] = {
     # Auto: Balanced weights across all operational factors
     "auto": PolicyWeights(
         health_weight=0.30,

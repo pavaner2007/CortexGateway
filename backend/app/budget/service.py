@@ -21,10 +21,9 @@ Rollover strategy (lazy):
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.budget.exceptions import BudgetConfigurationError, BudgetExceeded
@@ -57,7 +56,7 @@ class BudgetService:
 
     # ── CRUD ───────────────────────────────────────────────────────────────────
 
-    async def get_budget(self, team_id: str) -> Optional[Budget]:
+    async def get_budget(self, team_id: str) -> Budget | None:
         """Return the active budget for a team, or None if none exists."""
         result = await self._session.execute(
             select(Budget).where(Budget.team_id == team_id)
@@ -76,7 +75,7 @@ class BudgetService:
                 f"A budget already exists for team {team_id!r}. "
                 "Use PATCH to update or DELETE to remove it first."
             )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         period_end = self._compute_period_end(data.period, now)
         budget = Budget(
             team_id=team_id,
@@ -118,7 +117,7 @@ class BudgetService:
             budget.policy = data.policy
         if data.enabled is not None:
             budget.enabled = data.enabled
-        budget.updated_at = datetime.now(timezone.utc)
+        budget.updated_at = datetime.now(UTC)
         await self._session.commit()
         await self._session.refresh(budget)
         logger.info("Budget updated", team_id=team_id)
@@ -148,7 +147,7 @@ class BudgetService:
         if not budget.is_period_expired:
             return False
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         old_usage = budget.current_usage
         budget.current_usage = 0.0
         budget.reserved = 0.0
@@ -171,7 +170,7 @@ class BudgetService:
         team_id: str,
         estimated_cost: float,
         warning_threshold_percent: int = 80,
-    ) -> Tuple[Optional[Budget], bool]:
+    ) -> tuple[Budget | None, bool]:
         """
         Atomically check the budget and reserve the estimated cost.
 
@@ -259,7 +258,7 @@ class BudgetService:
                 )
             budget.reserved += estimated_cost
 
-        budget.updated_at = datetime.now(timezone.utc)
+        budget.updated_at = datetime.now(UTC)
         await self._session.commit()
         await self._session.refresh(budget)
         return budget, budget_warning
@@ -269,7 +268,7 @@ class BudgetService:
         team_id: str,
         estimated_cost: float,
         actual_cost: float,
-    ) -> Optional[Budget]:
+    ) -> Budget | None:
         """
         Reconcile the budget after provider execution.
 
@@ -293,7 +292,7 @@ class BudgetService:
         # Release reservation and charge actual cost
         budget.reserved = max(0.0, budget.reserved - estimated_cost)
         budget.current_usage = max(0.0, budget.current_usage + actual_cost)
-        budget.updated_at = datetime.now(timezone.utc)
+        budget.updated_at = datetime.now(UTC)
 
         await self._session.commit()
         await self._session.refresh(budget)
@@ -329,7 +328,7 @@ class BudgetService:
             return
 
         budget.reserved = max(0.0, budget.reserved - estimated_cost)
-        budget.updated_at = datetime.now(timezone.utc)
+        budget.updated_at = datetime.now(UTC)
         await self._session.commit()
         logger.info(
             "Budget reservation released (provider failure)",

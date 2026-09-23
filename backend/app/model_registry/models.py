@@ -15,8 +15,7 @@ Table: model_registry
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -38,7 +37,7 @@ def _new_uuid() -> str:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ModelRegistryEntry(Base):
@@ -63,7 +62,7 @@ class ModelRegistryEntry(Base):
     model_name: Mapped[str] = mapped_column(
         String(255), nullable=False
     )
-    display_name: Mapped[Optional[str]] = mapped_column(
+    display_name: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )
 

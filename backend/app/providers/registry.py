@@ -13,11 +13,9 @@ Design:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 from app.core.logging import logger
 from app.providers.base import BaseLLMProvider
-from app.providers.exceptions import InvalidProviderError, ProviderDisabledError
+from app.providers.exceptions import InvalidProviderError
 from app.schemas.chat import ProviderInfo
 
 
@@ -33,7 +31,7 @@ class ProviderRegistry:
     """
 
     def __init__(self) -> None:
-        self._providers: Dict[str, BaseLLMProvider] = {}
+        self._providers: dict[str, BaseLLMProvider] = {}
 
     def register(self, provider: BaseLLMProvider) -> None:
         """
@@ -73,7 +71,7 @@ class ProviderRegistry:
         """Return True if the provider is registered."""
         return name.strip().lower() in self._providers
 
-    def list_providers(self) -> List[ProviderInfo]:
+    def list_providers(self) -> list[ProviderInfo]:
         """
         Return safe metadata for all registered providers.
 
@@ -87,7 +85,7 @@ class ProviderRegistry:
         ]
 
     @property
-    def provider_names(self) -> List[str]:
+    def provider_names(self) -> list[str]:
         """Return sorted list of registered provider names."""
         return sorted(self._providers.keys())
 

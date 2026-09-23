@@ -6,10 +6,9 @@ Data structures and enums for circuit breaking, retries, and failover tracking.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from enum import Enum
-import time
-from typing import List, Optional, Set
 
 from app.schemas.chat import ChatCompletionResponse
 
@@ -32,7 +31,7 @@ class AttemptRecord:
     is_failover: bool
     is_success: bool
     latency_ms: float = 0.0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -41,15 +40,15 @@ class ReliabilityContext:
 
     request_id: str
     deadline_timestamp: float
-    original_provider: Optional[str] = None
-    original_model: Optional[str] = None
-    selected_provider: Optional[str] = None
-    selected_model: Optional[str] = None
-    attempted_providers: Set[str] = field(default_factory=set)
+    original_provider: str | None = None
+    original_model: str | None = None
+    selected_provider: str | None = None
+    selected_model: str | None = None
+    attempted_providers: set[str] = field(default_factory=set)
     retry_count: int = 0
     failover_attempts: int = 0
     failover_triggered: bool = False
-    attempts: List[AttemptRecord] = field(default_factory=list)
+    attempts: list[AttemptRecord] = field(default_factory=list)
     start_time: float = field(default_factory=time.monotonic)
 
     def is_deadline_exceeded(self) -> bool:

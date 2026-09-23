@@ -7,7 +7,6 @@ so they integrate seamlessly with global exception handlers.
 
 from __future__ import annotations
 
-from typing import Optional
 from app.providers.exceptions import ProviderException
 
 
@@ -25,7 +24,7 @@ class NoRoutableProviderError(RoutingException):
     def __init__(
         self,
         message: str = "No healthy, enabled providers are available to route this request.",
-        details: Optional[str] = None,
+        details: str | None = None,
     ) -> None:
         super().__init__(message, details=details)
 
@@ -38,7 +37,7 @@ class NoCapableProviderError(RoutingException):
     def __init__(
         self,
         message: str = "No available provider supports the required capabilities.",
-        details: Optional[str] = None,
+        details: str | None = None,
     ) -> None:
         super().__init__(message, details=details)
 
@@ -51,7 +50,7 @@ class InvalidRoutingModeError(RoutingException):
     def __init__(
         self,
         message: str = "Invalid routing mode specified.",
-        details: Optional[str] = None,
+        details: str | None = None,
     ) -> None:
         super().__init__(message, details=details)
 
@@ -64,6 +63,6 @@ class InvalidManualRoutingError(RoutingException):
     def __init__(
         self,
         message: str = "Manual routing mode requires both a valid provider and a concrete model name.",
-        details: Optional[str] = None,
+        details: str | None = None,
     ) -> None:
         super().__init__(message, details=details)

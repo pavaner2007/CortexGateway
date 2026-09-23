@@ -8,10 +8,8 @@ Date range semantics: from=inclusive, to=exclusive.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
-
 
 # ── Shared ────────────────────────────────────────────────────────────────────
 
@@ -29,35 +27,35 @@ class RequestLogItem(BaseModel):
     """One row of the request log — metadata only, no sensitive content."""
 
     request_id: str
-    team_id: Optional[str] = None
-    organization_id: Optional[str] = None
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    routing_mode: Optional[str] = None
+    team_id: str | None = None
+    organization_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    routing_mode: str | None = None
     status: str
-    http_status_code: Optional[int] = None
-    latency_ms: Optional[float] = None
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-    estimated_cost: Optional[float] = None
-    actual_cost: Optional[float] = None
+    http_status_code: int | None = None
+    latency_ms: float | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    estimated_cost: float | None = None
+    actual_cost: float | None = None
     retry_count: int = 0
     failover_triggered: bool = False
-    failover_from_provider: Optional[str] = None
-    failover_to_provider: Optional[str] = None
-    circuit_breaker_state: Optional[str] = None
-    budget_policy_applied: Optional[str] = None
-    budget_action: Optional[str] = None
-    error_code: Optional[str] = None
-    trace_id: Optional[str] = None
+    failover_from_provider: str | None = None
+    failover_to_provider: str | None = None
+    circuit_breaker_state: str | None = None
+    budget_policy_applied: str | None = None
+    budget_action: str | None = None
+    error_code: str | None = None
+    trace_id: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class RequestsAnalyticsResponse(BaseModel):
-    data: List[RequestLogItem]
+    data: list[RequestLogItem]
     pagination: PaginationMeta
 
 
@@ -73,9 +71,9 @@ class CostGroupItem(BaseModel):
 
 class CostsAnalyticsResponse(BaseModel):
     group_by: str
-    from_: Optional[str] = Field(None, alias="from")
-    to: Optional[str] = None
-    data: List[CostGroupItem]
+    from_: str | None = Field(None, alias="from")
+    to: str | None = None
+    data: list[CostGroupItem]
 
     model_config = {"populate_by_name": True}
 
@@ -84,55 +82,55 @@ class CostsAnalyticsResponse(BaseModel):
 
 
 class LatencyGroupItem(BaseModel):
-    provider: Optional[str] = None
+    provider: str | None = None
     request_count: int
-    avg_latency_ms: Optional[float] = None
-    p50_latency_ms: Optional[float] = None
-    p95_latency_ms: Optional[float] = None
-    p99_latency_ms: Optional[float] = None
+    avg_latency_ms: float | None = None
+    p50_latency_ms: float | None = None
+    p95_latency_ms: float | None = None
+    p99_latency_ms: float | None = None
 
 
 class LatencyAnalyticsResponse(BaseModel):
-    data: List[LatencyGroupItem]
+    data: list[LatencyGroupItem]
 
 
 # ── GET /api/v1/analytics/errors ─────────────────────────────────────────────
 
 
 class ErrorGroupItem(BaseModel):
-    provider: Optional[str] = None
-    error_code: Optional[str] = None
+    provider: str | None = None
+    error_code: str | None = None
     count: int
 
 
 class ErrorsAnalyticsResponse(BaseModel):
-    data: List[ErrorGroupItem]
+    data: list[ErrorGroupItem]
 
 
 # ── GET /api/v1/analytics/fallbacks ──────────────────────────────────────────
 
 
 class FallbackGroupItem(BaseModel):
-    from_provider: Optional[str] = None
-    to_provider: Optional[str] = None
+    from_provider: str | None = None
+    to_provider: str | None = None
     count: int
 
 
 class FallbacksAnalyticsResponse(BaseModel):
-    data: List[FallbackGroupItem]
+    data: list[FallbackGroupItem]
 
 
 # ── GET /api/v1/analytics/budget-events ──────────────────────────────────────
 
 
 class BudgetEventItem(BaseModel):
-    budget_action: Optional[str] = None
-    budget_policy_applied: Optional[str] = None
+    budget_action: str | None = None
+    budget_policy_applied: str | None = None
     event_count: int
 
 
 class BudgetEventsAnalyticsResponse(BaseModel):
-    data: List[BudgetEventItem]
+    data: list[BudgetEventItem]
 
 
 # ── GET /api/v1/analytics/timeseries ─────────────────────────────────────────
@@ -144,9 +142,9 @@ class TimeseriesBucket(BaseModel):
     success_count: int
     error_count: int
     total_cost: float
-    avg_latency_ms: Optional[float] = None
+    avg_latency_ms: float | None = None
 
 
 class TimeseriesAnalyticsResponse(BaseModel):
     bucket: str = Field(description="Bucket size: hour | day | week")
-    data: List[TimeseriesBucket]
+    data: list[TimeseriesBucket]

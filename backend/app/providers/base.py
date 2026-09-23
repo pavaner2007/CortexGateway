@@ -18,7 +18,6 @@ No other files (routes, services, registry) need modification.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List
 
 from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
 
@@ -80,7 +79,7 @@ class BaseLLMProvider(ABC):
         ...
 
     @abstractmethod
-    async def list_models(self) -> List[str]:
+    async def list_models(self) -> list[str]:
         """
         Return the list of model identifiers available from this provider.
 

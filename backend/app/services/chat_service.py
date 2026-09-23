@@ -41,7 +41,7 @@ ChatService responsibilities:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.auth.schemas import RequestContext
@@ -51,7 +51,6 @@ from app.experiment.assigner import ExperimentAssigner
 from app.experiment.schemas import ExperimentAssignment
 from app.providers.registry import ProviderRegistry
 from app.reliability.executor import ReliabilityExecutor
-from app.routing.candidates import CandidateBuilder
 from app.routing.models import RoutingCandidate
 from app.routing.router import RoutingEngine
 from app.routing.scorer import CandidateScorer
@@ -69,8 +68,8 @@ class ChatService:
     def __init__(
         self,
         registry: ProviderRegistry,
-        routing_engine: Optional[RoutingEngine] = None,
-        reliability_executor: Optional[ReliabilityExecutor] = None,
+        routing_engine: RoutingEngine | None = None,
+        reliability_executor: ReliabilityExecutor | None = None,
     ) -> None:
         self._registry = registry
         self._routing_engine = routing_engine or RoutingEngine(registry=registry)
@@ -91,7 +90,7 @@ class ChatService:
         self,
         request: ChatCompletionRequest,
         request_id: str,
-        context: Optional["RequestContext"] = None,
+        context: RequestContext | None = None,
         # Phase 6 injectable dependencies (None = disabled / no-op)
         rate_limiter: object = None,
         budget_service: object = None,
@@ -130,11 +129,10 @@ class ChatService:
         policy = resolved_policy if resolved_policy is not None else GLOBAL_DEFAULT_POLICY
 
         # ── 1. Rate Limiting ──────────────────────────────────────────────────
-        rate_limit_remaining: Optional[int] = None
+        rate_limit_remaining: int | None = None
 
         if context and rate_limiter and getattr(s, "rate_limit_enabled", True):
             from app.budget.exceptions import RateLimitExceeded
-            from app.rate_limit.limiter import RateLimiter
 
             # Resolve effective team limits: per-team DB override → global default
             team_rpm = s.rate_limit_team_requests
@@ -229,7 +227,7 @@ class ChatService:
         # The ExperimentAssignment is stored separately so the assigned arm_name
         # is preserved in the log even if Phase 4 failover routes to a different
         # provider/model.
-        experiment_assignment: Optional[ExperimentAssignment] = None
+        experiment_assignment: ExperimentAssignment | None = None
         experiment_cfg = getattr(policy, "experiment", None)
         if experiment_cfg is not None and context is not None:
             experiment_assignment = ExperimentAssigner.assign(
@@ -305,7 +303,7 @@ class ChatService:
 
         # ── 5. Provider Execution (Phase 3 + Phase 4) ─────────────────────────
         actual_cost: float = 0.0
-        response: Optional[ChatCompletionResponse] = None
+        response: ChatCompletionResponse | None = None
 
         try:
             # Phase 9C: honour policy.fallback.enabled.
@@ -340,7 +338,7 @@ class ChatService:
             raise
 
         # ── 6. Actual Cost + Budget Reconciliation ────────────────────────────
-        remaining_budget: Optional[float] = None
+        remaining_budget: float | None = None
 
         if context and budget_service and cost_calculator and estimated_cost >= 0:
             # Use the provider/model that actually served the request
@@ -401,7 +399,7 @@ class ChatService:
     async def _attempt_budget_downgrade(
         self,
         request: ChatCompletionRequest,
-        context: "RequestContext",
+        context: RequestContext,
         budget_service: object,
         cost_calculator: object,
         original_provider: str,
@@ -439,13 +437,13 @@ class ChatService:
         )
 
         # Build all candidates via Phase 3 candidate builder
-        all_candidates: List[RoutingCandidate] = (
+        all_candidates: list[RoutingCandidate] = (
             await self._routing_engine._candidate_builder.build_candidates()
         )
 
         # Filter: must be healthy, have required capabilities, and fit in budget
         required_caps = request.required_capabilities or []
-        affordable: List[RoutingCandidate] = []
+        affordable: list[RoutingCandidate] = []
 
         for c in all_candidates:
             if not c.is_healthy:

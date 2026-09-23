@@ -12,12 +12,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from typing import List, Optional
 
 from app.schemas.chat import ChatCompletionRequest
 
 
-def cosine_similarity(a: List[float], b: List[float]) -> float:
+def cosine_similarity(a: list[float], b: list[float]) -> float:
     """
     Compute cosine similarity between two vectors.
 
@@ -90,7 +89,7 @@ def build_config_hash(request: ChatCompletionRequest) -> str:
     Returns a 16-character hex prefix of the SHA-256 digest.
     This is long enough to be collision-resistant at project scale.
     """
-    system_prompt: Optional[str] = None
+    system_prompt: str | None = None
     for msg in request.messages:
         if msg.role == "system":
             system_prompt = msg.content

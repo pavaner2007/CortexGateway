@@ -15,7 +15,6 @@ from __future__ import annotations
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Deque, Dict, Optional, Tuple
 
 
 @dataclass
@@ -27,12 +26,12 @@ class ModelStats:
     total_requests: int = 0
     successful_requests: int = 0
     failed_requests: int = 0
-    last_latency_ms: Optional[float] = None
-    average_latency_ms: Optional[float] = None
+    last_latency_ms: float | None = None
+    average_latency_ms: float | None = None
     # Rolling window of last N request outcomes (True=success, False=fail)
-    _recent_outcomes: Deque[bool] = field(default_factory=lambda: deque(maxlen=50))
+    _recent_outcomes: deque[bool] = field(default_factory=lambda: deque(maxlen=50))
     # Rolling window of last N latency measurements in ms
-    _recent_latencies: Deque[float] = field(default_factory=lambda: deque(maxlen=50))
+    _recent_latencies: deque[float] = field(default_factory=lambda: deque(maxlen=50))
 
     @property
     def success_rate(self) -> float:
@@ -42,7 +41,7 @@ class ModelStats:
         return sum(1 for o in self._recent_outcomes if o) / len(self._recent_outcomes)
 
     @property
-    def latency_ms(self) -> Optional[float]:
+    def latency_ms(self) -> float | None:
         """Average latency over recent window, or last observed."""
         if self._recent_latencies:
             return sum(self._recent_latencies) / len(self._recent_latencies)
@@ -70,10 +69,10 @@ class ProviderStatsTracker:
     """In-memory thread-safe statistics tracker."""
 
     def __init__(self) -> None:
-        self._stats: Dict[Tuple[str, str], ModelStats] = {}
+        self._stats: dict[tuple[str, str], ModelStats] = {}
         self._lock = threading.Lock()
 
-    def _key(self, provider: str, model: str) -> Tuple[str, str]:
+    def _key(self, provider: str, model: str) -> tuple[str, str]:
         return (provider.lower().strip(), model.strip())
 
     def get_or_create(self, provider: str, model: str) -> ModelStats:
@@ -93,7 +92,7 @@ class ProviderStatsTracker:
         with self._lock:
             stats.record_failure()
 
-    def get_stats(self, provider: str, model: str) -> Optional[ModelStats]:
+    def get_stats(self, provider: str, model: str) -> ModelStats | None:
         key = self._key(provider, model)
         with self._lock:
             return self._stats.get(key)

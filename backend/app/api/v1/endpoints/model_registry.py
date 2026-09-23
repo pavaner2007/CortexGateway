@@ -22,8 +22,6 @@ Side effects:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,7 +76,7 @@ async def _trigger_catalog_refresh(session: AsyncSession) -> None:
     },
 )
 async def list_models(
-    provider: Optional[str] = Query(None, description="Filter by provider name"),
+    provider: str | None = Query(None, description="Filter by provider name"),
     enabled_only: bool = Query(True, description="Return only enabled models"),
     _context: RequestContext = Depends(require_admin),
     service: ModelRegistryService = Depends(_get_registry_service),

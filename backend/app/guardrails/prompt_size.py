@@ -17,8 +17,6 @@ Action:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from app.guardrails.base import GuardrailResult
 
 
@@ -33,10 +31,10 @@ class PromptSizeGuardrail:
 
     NAME = "prompt_size"
 
-    def __init__(self, max_chars: Optional[int]) -> None:
+    def __init__(self, max_chars: int | None) -> None:
         self._max_chars = max_chars
 
-    def check(self, prompt: str) -> Optional[GuardrailResult]:
+    def check(self, prompt: str) -> GuardrailResult | None:
         """
         Check prompt length against the configured maximum.
 

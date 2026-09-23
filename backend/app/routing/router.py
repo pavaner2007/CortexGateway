@@ -8,8 +8,6 @@ scores candidates deterministically, and returns RoutingDecision.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from app.core.logging import logger
 from app.providers.registry import ProviderRegistry
 from app.routing.candidates import CandidateBuilder
@@ -21,7 +19,7 @@ from app.routing.exceptions import (
 )
 from app.routing.metadata import ModelMetadataCatalog
 from app.routing.models import RoutingCandidate, RoutingDecision, RoutingMode
-from app.routing.policies import PolicyWeights, RoutingPolicyRegistry
+from app.routing.policies import RoutingPolicyRegistry
 from app.routing.scorer import CandidateScorer
 from app.routing.stats import ProviderStatsTracker
 from app.schemas.chat import ChatCompletionRequest
@@ -46,10 +44,10 @@ class RoutingEngine:
     def __init__(
         self,
         registry: ProviderRegistry,
-        stats_tracker: Optional[ProviderStatsTracker] = None,
-        metadata_catalog: Optional[ModelMetadataCatalog] = None,
-        policy_registry: Optional[RoutingPolicyRegistry] = None,
-        scorer: Optional[CandidateScorer] = None,
+        stats_tracker: ProviderStatsTracker | None = None,
+        metadata_catalog: ModelMetadataCatalog | None = None,
+        policy_registry: RoutingPolicyRegistry | None = None,
+        scorer: CandidateScorer | None = None,
         default_mode: RoutingMode = "auto",
         ollama_default_cost: float = 0.0,
     ) -> None:
@@ -227,12 +225,12 @@ class RoutingEngine:
 
     @staticmethod
     def _filter_by_capabilities(
-        candidates: List[RoutingCandidate],
-        required: List[str],
-    ) -> List[RoutingCandidate]:
+        candidates: list[RoutingCandidate],
+        required: list[str],
+    ) -> list[RoutingCandidate]:
         """Keep only candidates that support all requested capabilities (case-insensitive)."""
         req_set = {r.lower().strip() for r in required if r.strip()}
-        filtered: List[RoutingCandidate] = []
+        filtered: list[RoutingCandidate] = []
         for c in candidates:
             cand_set = {cap.lower().strip() for cap in c.capabilities}
             if req_set.issubset(cand_set):
@@ -241,9 +239,10 @@ class RoutingEngine:
 
 
 from fastapi import Depends
+
 from app.providers.registry import get_registry
 
-_routing_engine_instance: Optional[RoutingEngine] = None
+_routing_engine_instance: RoutingEngine | None = None
 
 
 def get_routing_engine(
@@ -273,7 +272,7 @@ def get_routing_engine(
     return _routing_engine_instance
 
 
-def set_routing_engine(engine: Optional[RoutingEngine]) -> None:
+def set_routing_engine(engine: RoutingEngine | None) -> None:
     """Set or reset global RoutingEngine instance (useful for testing)."""
     global _routing_engine_instance
     _routing_engine_instance = engine

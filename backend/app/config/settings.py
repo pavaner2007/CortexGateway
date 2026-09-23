@@ -13,7 +13,6 @@ Provider API keys, peppers, and bootstrap tokens are NEVER logged or returned to
 """
 
 from functools import lru_cache
-from typing import List
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -201,7 +200,7 @@ class Settings(BaseSettings):
         return v
 
     @property
-    def cors_origins_list(self) -> List[str]:
+    def cors_origins_list(self) -> list[str]:
         """Return CORS origins as a list of strings."""
         raw = self.cors_origins
         if isinstance(raw, list):

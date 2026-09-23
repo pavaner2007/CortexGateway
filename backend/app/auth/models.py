@@ -23,8 +23,7 @@ Security:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
@@ -40,7 +39,7 @@ from app.database.base import Base
 
 def _now_utc() -> datetime:
     """Return the current UTC datetime (timezone-aware)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_uuid() -> str:
@@ -71,7 +70,7 @@ class Organization(Base):
     )
 
     # Relationships
-    teams: Mapped[List["Team"]] = relationship(
+    teams: Mapped[list[Team]] = relationship(
         "Team",
         back_populates="organization",
         cascade="all, delete-orphan",
@@ -114,10 +113,10 @@ class Team(Base):
     )
 
     # Relationships
-    organization: Mapped["Organization"] = relationship(
+    organization: Mapped[Organization] = relationship(
         "Organization", back_populates="teams"
     )
-    api_keys: Mapped[List["APIKey"]] = relationship(
+    api_keys: Mapped[list[APIKey]] = relationship(
         "APIKey",
         back_populates="team",
         cascade="all, delete-orphan",
@@ -163,21 +162,21 @@ class APIKey(Base):
     key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
-    expires_at: Mapped[Optional[datetime]] = mapped_column(
+    expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+    revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now_utc
     )
-    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+    last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
     # Relationships
-    team: Mapped["Team"] = relationship("Team", back_populates="api_keys")
+    team: Mapped[Team] = relationship("Team", back_populates="api_keys")
 
     __table_args__ = (
         Index("ix_api_keys_team_id", "team_id"),
@@ -188,11 +187,10 @@ class APIKey(Base):
     @property
     def is_active(self) -> bool:
         """Return True if the key is neither revoked nor expired."""
-        from datetime import timezone as tz
         if self.revoked_at is not None:
             return False
         if self.expires_at is not None:
-            return datetime.now(tz.utc) < self.expires_at
+            return datetime.now(UTC) < self.expires_at
         return True
 
     def __repr__(self) -> str:  # pragma: no cover

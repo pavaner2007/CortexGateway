@@ -25,7 +25,7 @@ Phase 6 access pattern (rate limiting):
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -39,12 +39,12 @@ from app.core.logging import logger
 from app.database.session import get_db_dependency
 
 # ── ContextVar for request context (same pattern as request_id) ───────────────
-_request_context_ctx: ContextVar[Optional[RequestContext]] = ContextVar(
+_request_context_ctx: ContextVar[RequestContext | None] = ContextVar(
     "request_context", default=None
 )
 
 
-def get_current_context() -> Optional[RequestContext]:
+def get_current_context() -> RequestContext | None:
     """
     Return the current authenticated RequestContext from the ContextVar.
 
@@ -54,7 +54,7 @@ def get_current_context() -> Optional[RequestContext]:
     return _request_context_ctx.get()
 
 
-def set_current_context(ctx: Optional[RequestContext]) -> None:
+def set_current_context(ctx: RequestContext | None) -> None:
     """Store a RequestContext in the current async task's ContextVar."""
     _request_context_ctx.set(ctx)
 
@@ -69,7 +69,7 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 async def get_request_context(
     credentials: Annotated[
-        Optional[HTTPAuthorizationCredentials],
+        HTTPAuthorizationCredentials | None,
         Depends(_bearer_scheme),
     ] = None,
     session: AsyncSession = Depends(get_db_dependency),

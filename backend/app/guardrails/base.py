@@ -15,7 +15,6 @@ Security note:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass(frozen=True)
@@ -35,7 +34,7 @@ class GuardrailResult:
     triggered: bool
     guardrail: str
     action: str
-    reason_code: Optional[str] = None
+    reason_code: str | None = None
 
 
 @dataclass
@@ -51,9 +50,9 @@ class GuardrailRunResult:
         results:         Individual per-guardrail results that triggered.
     """
 
-    triggered_names: List[str] = field(default_factory=list)
-    final_action: Optional[str] = None
-    results: List[GuardrailResult] = field(default_factory=list)
+    triggered_names: list[str] = field(default_factory=list)
+    final_action: str | None = None
+    results: list[GuardrailResult] = field(default_factory=list)
 
     @property
     def any_triggered(self) -> bool:

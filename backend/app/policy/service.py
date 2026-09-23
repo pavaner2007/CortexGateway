@@ -9,8 +9,7 @@ invalid policies are rejected before touching the database.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -29,7 +28,7 @@ class PolicyService:
 
     # ── Read ──────────────────────────────────────────────────────────────────
 
-    async def get_policy_model(self, team_id: str) -> Optional[TeamPolicyModel]:
+    async def get_policy_model(self, team_id: str) -> TeamPolicyModel | None:
         """Return the raw ORM model for a team's policy, or None if not set."""
         result = await self._session.execute(
             select(TeamPolicyModel).where(
@@ -39,7 +38,7 @@ class PolicyService:
         )
         return result.scalar_one_or_none()
 
-    async def get_policy_dict(self, team_id: str) -> Optional[dict]:
+    async def get_policy_dict(self, team_id: str) -> dict | None:
         """
         Return the stored policy JSONB dict for a team, or None if not set.
 
@@ -68,7 +67,7 @@ class PolicyService:
         # Dump only the sections that were explicitly set (exclude_none).
         policy_dict = policy_input.model_dump(exclude_none=True)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         stmt = (
             pg_insert(TeamPolicyModel)

@@ -7,8 +7,6 @@ while strictly excluding previously attempted providers and providers with OPEN 
 
 from __future__ import annotations
 
-from typing import Optional, Set
-
 from app.core.logging import logger
 from app.reliability.circuit_breaker import CircuitBreakerRegistry
 from app.routing.models import RoutingCandidate
@@ -34,8 +32,8 @@ class FailoverSelector:
     async def select_fallback(
         self,
         request: ChatCompletionRequest,
-        attempted_providers: Set[str],
-    ) -> Optional[RoutingCandidate]:
+        attempted_providers: set[str],
+    ) -> RoutingCandidate | None:
         """
         Discover and score eligible fallback candidates.
 

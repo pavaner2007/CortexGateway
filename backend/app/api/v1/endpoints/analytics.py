@@ -22,18 +22,17 @@ Endpoints:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_request_context, require_admin
+from app.auth.dependencies import require_admin
 from app.auth.schemas import RequestContext
 from app.database.session import get_db_dependency
 from app.observability.analytics_schemas import (
     BudgetEventsAnalyticsResponse,
-    CostsAnalyticsResponse,
     CostGroupItem,
+    CostsAnalyticsResponse,
     ErrorsAnalyticsResponse,
     FallbacksAnalyticsResponse,
     LatencyAnalyticsResponse,
@@ -41,7 +40,7 @@ from app.observability.analytics_schemas import (
     RequestsAnalyticsResponse,
     TimeseriesAnalyticsResponse,
 )
-from app.observability.analytics_service import AnalyticsService, MAX_PAGE_SIZE
+from app.observability.analytics_service import MAX_PAGE_SIZE, AnalyticsService
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
@@ -65,13 +64,13 @@ def _get_analytics_service(
     ),
 )
 async def get_requests(
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    provider: Optional[str] = Query(None, description="Filter by provider name"),
-    model: Optional[str] = Query(None, description="Filter by model name"),
-    status: Optional[str] = Query(None, description="Filter by status (success/failure/rate_limited/budget_blocked/timeout)"),
-    request_id: Optional[str] = Query(None, description="Filter by exact request_id (for detail lookup)"),
-    from_: Optional[datetime] = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
-    to: Optional[datetime] = Query(None, description="End datetime (UTC, exclusive)"),
+    team_id: str | None = Query(None, description="Filter by team ID"),
+    provider: str | None = Query(None, description="Filter by provider name"),
+    model: str | None = Query(None, description="Filter by model name"),
+    status: str | None = Query(None, description="Filter by status (success/failure/rate_limited/budget_blocked/timeout)"),
+    request_id: str | None = Query(None, description="Filter by exact request_id (for detail lookup)"),
+    from_: datetime | None = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
+    to: datetime | None = Query(None, description="End datetime (UTC, exclusive)"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=MAX_PAGE_SIZE, description=f"Results per page (max {MAX_PAGE_SIZE})"),
     context: RequestContext = Depends(require_admin),
@@ -110,9 +109,9 @@ async def get_requests(
 )
 async def get_costs(
     group_by: str = Query("provider", description="Aggregation dimension: provider | model | team"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    from_: Optional[datetime] = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
-    to: Optional[datetime] = Query(None, description="End datetime (UTC, exclusive)"),
+    team_id: str | None = Query(None, description="Filter by team ID"),
+    from_: datetime | None = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
+    to: datetime | None = Query(None, description="End datetime (UTC, exclusive)"),
     context: RequestContext = Depends(require_admin),
     service: AnalyticsService = Depends(_get_analytics_service),
 ) -> CostsAnalyticsResponse:
@@ -144,10 +143,10 @@ async def get_costs(
     ),
 )
 async def get_latency(
-    provider: Optional[str] = Query(None, description="Filter by provider"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    from_: Optional[datetime] = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
-    to: Optional[datetime] = Query(None, description="End datetime (UTC, exclusive)"),
+    provider: str | None = Query(None, description="Filter by provider"),
+    team_id: str | None = Query(None, description="Filter by team ID"),
+    from_: datetime | None = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
+    to: datetime | None = Query(None, description="End datetime (UTC, exclusive)"),
     context: RequestContext = Depends(require_admin),
     service: AnalyticsService = Depends(_get_analytics_service),
 ) -> LatencyAnalyticsResponse:
@@ -175,10 +174,10 @@ async def get_latency(
     ),
 )
 async def get_errors(
-    provider: Optional[str] = Query(None, description="Filter by provider"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    from_: Optional[datetime] = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
-    to: Optional[datetime] = Query(None, description="End datetime (UTC, exclusive)"),
+    provider: str | None = Query(None, description="Filter by provider"),
+    team_id: str | None = Query(None, description="Filter by team ID"),
+    from_: datetime | None = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
+    to: datetime | None = Query(None, description="End datetime (UTC, exclusive)"),
     context: RequestContext = Depends(require_admin),
     service: AnalyticsService = Depends(_get_analytics_service),
 ) -> ErrorsAnalyticsResponse:
@@ -206,9 +205,9 @@ async def get_errors(
     ),
 )
 async def get_fallbacks(
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    from_: Optional[datetime] = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
-    to: Optional[datetime] = Query(None, description="End datetime (UTC, exclusive)"),
+    team_id: str | None = Query(None, description="Filter by team ID"),
+    from_: datetime | None = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
+    to: datetime | None = Query(None, description="End datetime (UTC, exclusive)"),
     context: RequestContext = Depends(require_admin),
     service: AnalyticsService = Depends(_get_analytics_service),
 ) -> FallbacksAnalyticsResponse:
@@ -235,10 +234,10 @@ async def get_fallbacks(
     ),
 )
 async def get_budget_events(
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    policy: Optional[str] = Query(None, description="Filter by policy: BLOCK | WARN | DOWNGRADE"),
-    from_: Optional[datetime] = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
-    to: Optional[datetime] = Query(None, description="End datetime (UTC, exclusive)"),
+    team_id: str | None = Query(None, description="Filter by team ID"),
+    policy: str | None = Query(None, description="Filter by policy: BLOCK | WARN | DOWNGRADE"),
+    from_: datetime | None = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
+    to: datetime | None = Query(None, description="End datetime (UTC, exclusive)"),
     context: RequestContext = Depends(require_admin),
     service: AnalyticsService = Depends(_get_analytics_service),
 ) -> BudgetEventsAnalyticsResponse:
@@ -268,9 +267,9 @@ async def get_budget_events(
 )
 async def get_timeseries(
     bucket: str = Query("day", description="Time bucket size: hour | day | week"),
-    team_id: Optional[str] = Query(None, description="Filter by team ID"),
-    from_: Optional[datetime] = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
-    to: Optional[datetime] = Query(None, description="End datetime (UTC, exclusive)"),
+    team_id: str | None = Query(None, description="Filter by team ID"),
+    from_: datetime | None = Query(None, alias="from", description="Start datetime (UTC, inclusive)"),
+    to: datetime | None = Query(None, description="End datetime (UTC, exclusive)"),
     context: RequestContext = Depends(require_admin),
     service: AnalyticsService = Depends(_get_analytics_service),
 ) -> TimeseriesAnalyticsResponse:

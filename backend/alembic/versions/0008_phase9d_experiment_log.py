@@ -1,4 +1,4 @@
-﻿"""Phase 9D — Add experiment tracking columns to request_logs.
+"""Phase 9D — Add experiment tracking columns to request_logs.
 
 Adds three nullable columns to the request_logs table:
   experiment_id      VARCHAR(255) — stable experiment identifier
@@ -20,8 +20,8 @@ Revises: 0007
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0008"
-down_revision = "0007"
+revision = "0008_phase9d_experiment_log"
+down_revision = "0007_phase9c_team_policies"
 branch_labels = None
 depends_on = None
 

@@ -15,8 +15,6 @@ Pricing is sourced from the Phase 3 ModelMetadata catalog (input/output split).
 
 from __future__ import annotations
 
-from typing import Optional
-
 from app.routing.metadata import ModelMetadataCatalog
 from app.routing.models import ModelMetadata
 from app.schemas.chat import ChatCompletionRequest, UsageMetadata
@@ -80,7 +78,7 @@ class CostCalculator:
         self,
         provider: str,
         model: str,
-        usage: Optional[UsageMetadata],
+        usage: UsageMetadata | None,
         estimated_cost: float,
     ) -> float:
         """

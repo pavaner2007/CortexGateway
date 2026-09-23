@@ -32,16 +32,15 @@ from app.database.session import get_db_dependency
 from app.guardrails.exceptions import GuardrailBlocked
 from app.guardrails.runner import GuardrailRunner
 from app.middleware.request_id import get_request_id
+from app.policy.resolver import PolicyResolver
+from app.policy.schemas import GLOBAL_DEFAULT_POLICY, ResolvedPolicy
 from app.providers.registry import ProviderRegistry, get_registry
 from app.rate_limit.limiter import RateLimiter
-from app.routing.metadata import ModelMetadataCatalog
 from app.routing.router import RoutingEngine, get_routing_engine
 from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
 from app.semantic_cache.cache import SemanticCache
 from app.services.chat_service import ChatService
 from app.utils.redis_client import get_redis
-from app.policy.resolver import PolicyResolver
-from app.policy.schemas import GLOBAL_DEFAULT_POLICY, ResolvedPolicy
 
 router = APIRouter()
 

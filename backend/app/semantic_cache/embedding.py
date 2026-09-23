@@ -14,8 +14,6 @@ Design rules:
 
 from __future__ import annotations
 
-from typing import List
-
 import httpx
 
 from app.core.logging import logger
@@ -50,7 +48,7 @@ class OllamaEmbeddingClient:
     def model(self) -> str:
         return self._model
 
-    async def embed(self, text: str) -> List[float]:
+    async def embed(self, text: str) -> list[float]:
         """
         Generate an embedding vector for the given text.
 

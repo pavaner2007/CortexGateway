@@ -11,8 +11,6 @@ be registered in a single place in app/exceptions.py.
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 class GatewayControlException(Exception):
     """Base class for Phase 6 request control exceptions."""
@@ -56,7 +54,7 @@ class BudgetExceeded(GatewayControlException):
     def __init__(
         self,
         message: str = "Team budget exhausted. Contact your administrator to increase the budget.",
-        team_id: Optional[str] = None,
+        team_id: str | None = None,
         remaining: float = 0.0,
     ) -> None:
         self.team_id = team_id

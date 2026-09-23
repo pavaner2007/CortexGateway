@@ -18,14 +18,14 @@ Security:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.core.logging import logger
 from app.database.session import get_db_session
 from app.observability.models import RequestLog
 
 
-async def write_request_log(log_data: Dict[str, Any]) -> None:
+async def write_request_log(log_data: dict[str, Any]) -> None:
     """
     Persist one RequestLog row.
 
@@ -84,15 +84,15 @@ def build_success_log(
     request_id: str,
     context,  # Optional[RequestContext]
     response,  # ChatCompletionResponse
-    trace_id: Optional[str] = None,
-    budget_policy: Optional[str] = None,
+    trace_id: str | None = None,
+    budget_policy: str | None = None,
     cache_hit: bool = False,        # Phase 9B
-    experiment_id: Optional[str] = None,       # Phase 9D
-    experiment_version: Optional[int] = None,  # Phase 9D
-    experiment_arm: Optional[str] = None,      # Phase 9D
-    guardrails_triggered: Optional[str] = None,  # Phase 9E: JSON-encoded list
-    guardrail_action: Optional[str] = None,      # Phase 9E: "warn" | "block" | None
-) -> Dict[str, Any]:
+    experiment_id: str | None = None,       # Phase 9D
+    experiment_version: int | None = None,  # Phase 9D
+    experiment_arm: str | None = None,      # Phase 9D
+    guardrails_triggered: str | None = None,  # Phase 9E: JSON-encoded list
+    guardrail_action: str | None = None,      # Phase 9E: "warn" | "block" | None
+) -> dict[str, Any]:
     """
     Build the log_data dict from a successful ChatCompletionResponse.
 
@@ -153,14 +153,14 @@ def build_error_log(
     status: str,
     http_status_code: int,
     error_code: str,
-    trace_id: Optional[str] = None,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
-    budget_policy: Optional[str] = None,
-    budget_action: Optional[str] = None,
-    guardrails_triggered: Optional[str] = None,  # Phase 9E
-    guardrail_action: Optional[str] = None,      # Phase 9E
-) -> Dict[str, Any]:
+    trace_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    budget_policy: str | None = None,
+    budget_action: str | None = None,
+    guardrails_triggered: str | None = None,  # Phase 9E
+    guardrail_action: str | None = None,      # Phase 9E
+) -> dict[str, Any]:
     """
     Build the log_data dict for a failed / rejected request.
     provider and model may be None when the request was rejected pre-routing.

@@ -14,9 +14,9 @@ Date semantics: from (inclusive) → to (exclusive), both UTC.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from sqlalchemy import func, select, text, case
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.observability.models import RequestLog
@@ -37,13 +37,13 @@ def _apply_common_filters(
     stmt,
     *,
     organization_id: str,
-    team_id: Optional[str] = None,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
-    status: Optional[str] = None,
-    request_id: Optional[str] = None,
-    from_dt: Optional[datetime] = None,
-    to_dt: Optional[datetime] = None,
+    team_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    status: str | None = None,
+    request_id: str | None = None,
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
 ):
     """Apply organization scoping + optional filters to a SQLAlchemy statement."""
     stmt = stmt.where(RequestLog.organization_id == organization_id)
@@ -76,16 +76,16 @@ class AnalyticsService:
         self,
         *,
         organization_id: str,
-        team_id: Optional[str] = None,
-        provider: Optional[str] = None,
-        model: Optional[str] = None,
-        status: Optional[str] = None,
-        request_id: Optional[str] = None,
-        from_dt: Optional[datetime] = None,
-        to_dt: Optional[datetime] = None,
+        team_id: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        status: str | None = None,
+        request_id: str | None = None,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> Tuple[List[RequestLog], int]:
+    ) -> tuple[list[RequestLog], int]:
         """Return paginated request logs and total count for the org."""
         page_size = min(page_size, MAX_PAGE_SIZE)
         offset = (page - 1) * page_size
@@ -123,10 +123,10 @@ class AnalyticsService:
         *,
         organization_id: str,
         group_by: str = "provider",
-        team_id: Optional[str] = None,
-        from_dt: Optional[datetime] = None,
-        to_dt: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
+        team_id: str | None = None,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Aggregate costs grouped by provider, model, or team."""
         if group_by not in _GROUP_BY_COLUMNS:
             group_by = "provider"
@@ -166,11 +166,11 @@ class AnalyticsService:
         self,
         *,
         organization_id: str,
-        provider: Optional[str] = None,
-        team_id: Optional[str] = None,
-        from_dt: Optional[datetime] = None,
-        to_dt: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
+        provider: str | None = None,
+        team_id: str | None = None,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Aggregate latency statistics per provider using PostgreSQL percentile_cont."""
         # We group by provider; filter to rows with latency data
         stmt = select(
@@ -219,11 +219,11 @@ class AnalyticsService:
         self,
         *,
         organization_id: str,
-        provider: Optional[str] = None,
-        team_id: Optional[str] = None,
-        from_dt: Optional[datetime] = None,
-        to_dt: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
+        provider: str | None = None,
+        team_id: str | None = None,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Count errors grouped by provider + error_code, sorted by frequency."""
         stmt = select(
             RequestLog.provider,
@@ -261,10 +261,10 @@ class AnalyticsService:
         self,
         *,
         organization_id: str,
-        team_id: Optional[str] = None,
-        from_dt: Optional[datetime] = None,
-        to_dt: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
+        team_id: str | None = None,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Count failovers by from_provider → to_provider pair."""
         stmt = select(
             RequestLog.failover_from_provider,
@@ -302,11 +302,11 @@ class AnalyticsService:
         self,
         *,
         organization_id: str,
-        team_id: Optional[str] = None,
-        policy: Optional[str] = None,
-        from_dt: Optional[datetime] = None,
-        to_dt: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
+        team_id: str | None = None,
+        policy: str | None = None,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Count budget events (blocked/warned/downgraded) by action + policy."""
         stmt = select(
             RequestLog.budget_action,
@@ -350,10 +350,10 @@ class AnalyticsService:
         *,
         organization_id: str,
         bucket: str = "day",
-        team_id: Optional[str] = None,
-        from_dt: Optional[datetime] = None,
-        to_dt: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
+        team_id: str | None = None,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Time-bucketed request/cost/error counts using PostgreSQL date_trunc."""
         valid_buckets = {"hour", "day", "week"}
         if bucket not in valid_buckets:

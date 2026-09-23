@@ -21,8 +21,8 @@ Phase 9C: Policy Engine — declarative team policy (routing, fallback, budget, 
 Phase 9D: A/B Testing & Canary — deterministic SHA-256 traffic splitting across model arms
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,15 +32,15 @@ from app.api.v1.endpoints.api_keys import router as api_keys_router
 from app.api.v1.endpoints.auth_me import router as auth_me_router
 from app.api.v1.endpoints.bootstrap import router as bootstrap_router
 from app.api.v1.endpoints.budget import router as budget_router
-from app.api.v1.endpoints.rate_limits import router as rate_limits_router
 from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.health import router as system_router
 from app.api.v1.endpoints.metrics import router as metrics_router
 from app.api.v1.endpoints.model_registry import router as model_registry_router
 from app.api.v1.endpoints.organizations import router as organizations_router
-from app.api.v1.endpoints.providers import router as providers_router
-from app.api.v1.endpoints.teams import router as teams_router
 from app.api.v1.endpoints.policy import router as policy_router
+from app.api.v1.endpoints.providers import router as providers_router
+from app.api.v1.endpoints.rate_limits import router as rate_limits_router
+from app.api.v1.endpoints.teams import router as teams_router
 from app.config.settings import get_settings
 from app.core.logging import configure_logging, logger
 from app.database.session import close_db, get_db_session, init_db
@@ -148,6 +148,7 @@ async def _catalog_refresh_loop() -> None:
     Failures are logged as warnings and never crash the application.
     """
     import asyncio
+
     from app.routing.metadata import _shared_catalog
 
     while True:
@@ -191,7 +192,7 @@ def _init_tracing() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Application lifespan manager.
 

@@ -11,7 +11,6 @@ No caching, rate limiting, or session features are implemented here.
 This module is purely connection infrastructure for Phase 1.
 """
 
-from typing import Optional
 
 import redis.asyncio as aioredis
 from redis.asyncio import Redis
@@ -20,7 +19,7 @@ from app.config.settings import get_settings
 from app.core.logging import logger
 
 # Module-level client — set during application startup.
-_redis_client: Optional[Redis] = None
+_redis_client: Redis | None = None
 
 
 def init_redis() -> None:
@@ -52,7 +51,7 @@ async def close_redis() -> None:
         logger.info("Redis client closed")
 
 
-async def get_redis() -> Optional[Redis]:
+async def get_redis() -> Redis | None:
     """FastAPI dependency — yields the Redis client."""
     return _redis_client
 

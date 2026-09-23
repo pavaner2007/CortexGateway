@@ -29,10 +29,9 @@ Eviction:
 from __future__ import annotations
 
 import json
-import time
 import uuid
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 
@@ -46,7 +45,7 @@ from app.schemas.chat import (
     UsageMetadata,
 )
 from app.semantic_cache.embedding import OllamaEmbeddingClient
-from app.semantic_cache.exceptions import CacheUnavailableError, EmbeddingError
+from app.semantic_cache.exceptions import EmbeddingError
 from app.semantic_cache.similarity import (
     build_config_hash,
     cosine_similarity,
@@ -77,13 +76,13 @@ class SemanticCache:
     def __init__(
         self,
         *,
-        redis: Optional[Redis],
+        redis: Redis | None,
         enabled: bool = False,
         version: str = "v1",
         ttl_seconds: int = 3600,
         similarity_threshold: float = 0.92,
         max_entries_per_team: int = 500,
-        embedding_client: Optional[OllamaEmbeddingClient] = None,
+        embedding_client: OllamaEmbeddingClient | None = None,
     ) -> None:
         self._redis = redis
         self._enabled = enabled
@@ -144,8 +143,8 @@ class SemanticCache:
     async def lookup(
         self,
         request: ChatCompletionRequest,
-        context: "RequestContext",
-    ) -> Optional[ChatCompletionResponse]:
+        context: RequestContext,
+    ) -> ChatCompletionResponse | None:
         """
         Attempt a semantic cache lookup.
 
@@ -206,7 +205,7 @@ class SemanticCache:
             return None
 
         best_similarity = -1.0
-        best_entry_data: Optional[dict] = None
+        best_entry_data: dict | None = None
 
         for entry_id in entry_ids:
             entry_key = self._entry_key(team_id, entry_id)
@@ -274,7 +273,7 @@ class SemanticCache:
     async def store(
         self,
         request: ChatCompletionRequest,
-        context: "RequestContext",
+        context: RequestContext,
         response: ChatCompletionResponse,
     ) -> None:
         """
@@ -342,7 +341,7 @@ class SemanticCache:
                     "provider": response.provider or "",
                     "model": response.model or "",
                     "config_hash": config_hash,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
             )
             pipe.expire(entry_key, self._ttl)
@@ -458,7 +457,7 @@ class SemanticCache:
 
 
 def build_semantic_cache(
-    redis: Optional[Redis],
+    redis: Redis | None,
     settings,  # Settings instance
 ) -> SemanticCache:
     """
@@ -469,7 +468,7 @@ def build_semantic_cache(
     """
     from app.semantic_cache.embedding import OllamaEmbeddingClient
 
-    embedding_client: Optional[OllamaEmbeddingClient] = None
+    embedding_client: OllamaEmbeddingClient | None = None
 
     if settings.semantic_cache_enabled:
         provider = getattr(settings, "semantic_cache_embedding_provider", "ollama").lower()

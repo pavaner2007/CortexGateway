@@ -18,8 +18,8 @@ Security:
 
 from __future__ import annotations
 
-from pydantic import BaseModel
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from app.auth.dependencies import get_request_context
 from app.auth.schemas import RequestContext

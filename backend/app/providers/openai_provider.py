@@ -8,7 +8,6 @@ All OpenAI-specific logic is isolated here; nothing leaks to routes or service.
 from __future__ import annotations
 
 import time
-from typing import List, Optional
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
@@ -32,7 +31,7 @@ from app.schemas.chat import (
 )
 
 # Static fallback model list (used if the API key is missing / list_models fails)
-_KNOWN_MODELS: List[str] = [
+_KNOWN_MODELS: list[str] = [
     "gpt-4o",
     "gpt-4o-mini",
     "gpt-4-turbo",
@@ -156,7 +155,7 @@ class OpenAIProvider(BaseLLMProvider):
         except Exception:
             return False
 
-    async def list_models(self) -> List[str]:
+    async def list_models(self) -> list[str]:
         """Fetch available models from OpenAI API."""
         try:
             response = await self._client.models.list()

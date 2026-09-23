@@ -1,6 +1,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Cortex Gateway — Backend Dockerfile
 # Multi-stage build: builder + slim runtime image.
+#
+# Phase 10: Added alembic/ and alembic.ini so migrations can be run from the
+# container:  docker exec cortex-backend alembic upgrade head
 # ─────────────────────────────────────────────────────────────────────────────
 
 FROM python:3.12-slim AS builder
@@ -30,6 +33,11 @@ COPY --from=builder /install /usr/local
 
 # Copy application source
 COPY app/ ./app/
+
+# Copy Alembic migrations so migrations can be run from the container:
+#   docker exec cortex-backend alembic upgrade head
+COPY alembic/ ./alembic/
+COPY alembic.ini .
 
 # Owned by non-root user
 RUN chown -R cortex:cortex /app

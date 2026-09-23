@@ -6,7 +6,7 @@ These are intentionally lean; additional schemas belong in their
 respective feature modules introduced in later phases.
 """
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -46,7 +46,7 @@ class ErrorDetail(BaseModel):
 
     code: str
     message: str
-    request_id: Optional[str] = None
+    request_id: str | None = None
 
 
 class ErrorResponse(BaseModel):

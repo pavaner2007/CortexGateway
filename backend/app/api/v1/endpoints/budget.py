@@ -47,6 +47,7 @@ async def _resolve_team(
     Cross-org access is rejected with 403.
     """
     from sqlalchemy import select
+
     from app.auth.models import Team
 
     result = await session.execute(

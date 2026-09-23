@@ -8,10 +8,8 @@ failover candidate selection via Phase 3 Scorer, runtime stats tracking, and res
 from __future__ import annotations
 
 import time
-from typing import Optional
 
 from app.core.logging import logger
-from app.providers.exceptions import ProviderException
 from app.providers.registry import ProviderRegistry
 from app.reliability.circuit_breaker import CircuitBreakerRegistry, get_circuit_breaker_registry
 from app.reliability.errors import (
@@ -23,7 +21,7 @@ from app.reliability.errors import (
 from app.reliability.failover import FailoverSelector
 from app.reliability.models import AttemptRecord, ReliabilityContext
 from app.reliability.retry import RetryPolicy
-from app.routing.router import RoutingEngine, get_routing_engine
+from app.routing.router import RoutingEngine
 from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
 
 
@@ -36,9 +34,9 @@ class ReliabilityExecutor:
         self,
         registry: ProviderRegistry,
         routing_engine: RoutingEngine,
-        circuit_registry: Optional[CircuitBreakerRegistry] = None,
-        retry_policy: Optional[RetryPolicy] = None,
-        failover_selector: Optional[FailoverSelector] = None,
+        circuit_registry: CircuitBreakerRegistry | None = None,
+        retry_policy: RetryPolicy | None = None,
+        failover_selector: FailoverSelector | None = None,
         total_request_timeout_seconds: float = 120.0,
         max_failover_attempts: int = 2,
     ) -> None:
@@ -68,7 +66,7 @@ class ReliabilityExecutor:
         request_id: str,
         initial_provider: str,
         initial_model: str,
-        routing_mode: Optional[str] = "auto",
+        routing_mode: str | None = "auto",
     ) -> ChatCompletionResponse:
         """
         Execute request with deadlines, circuit breaker, retry, and failover.
@@ -86,7 +84,7 @@ class ReliabilityExecutor:
         current_provider = initial_provider
         current_model = initial_model
         is_failover = False
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         # Outer loop handles failover attempts across candidate providers
         while context.failover_attempts <= self.max_failover_attempts:
@@ -330,12 +328,12 @@ class ReliabilityExecutor:
         raise FailoverExhaustedError()
 
 
-_reliability_executor_instance: Optional[ReliabilityExecutor] = None
+_reliability_executor_instance: ReliabilityExecutor | None = None
 
 
 def get_reliability_executor(
-    registry: Optional[ProviderRegistry] = None,
-    routing_engine: Optional[RoutingEngine] = None,
+    registry: ProviderRegistry | None = None,
+    routing_engine: RoutingEngine | None = None,
 ) -> ReliabilityExecutor:
     """Return or construct the global ReliabilityExecutor singleton."""
     global _reliability_executor_instance
@@ -365,7 +363,7 @@ def get_reliability_executor(
     return _reliability_executor_instance
 
 
-def set_reliability_executor(executor: Optional[ReliabilityExecutor]) -> None:
+def set_reliability_executor(executor: ReliabilityExecutor | None) -> None:
     """Override the global executor singleton (useful for testing)."""
     global _reliability_executor_instance
     _reliability_executor_instance = executor

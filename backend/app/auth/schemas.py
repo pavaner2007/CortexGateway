@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -100,7 +100,7 @@ class TeamResponse(BaseModel):
 class TeamListResponse(BaseModel):
     """List of teams for an organization."""
 
-    teams: List[TeamResponse]
+    teams: list[TeamResponse]
 
 
 class APIKeyCreate(BaseModel):
@@ -113,7 +113,7 @@ class APIKeyCreate(BaseModel):
         "member",
         description="Role granted to this key: 'admin' or 'member'.",
     )
-    expires_at: Optional[datetime] = Field(
+    expires_at: datetime | None = Field(
         None,
         description="Optional expiration datetime (UTC). Key never expires if omitted.",
     )
@@ -138,10 +138,10 @@ class APIKeyResponse(BaseModel):
     name: str
     key_prefix: str
     role: str
-    expires_at: Optional[datetime]
-    revoked_at: Optional[datetime]
+    expires_at: datetime | None
+    revoked_at: datetime | None
     created_at: datetime
-    last_used_at: Optional[datetime]
+    last_used_at: datetime | None
 
     model_config = {"from_attributes": True}
 
@@ -162,14 +162,14 @@ class APIKeyCreatedResponse(BaseModel):
     )
     key_prefix: str
     role: str
-    expires_at: Optional[datetime]
+    expires_at: datetime | None
     created_at: datetime
 
 
 class APIKeyListResponse(BaseModel):
     """List of API key metadata for a team."""
 
-    keys: List[APIKeyResponse]
+    keys: list[APIKeyResponse]
 
 
 class BootstrapRequest(BaseModel):

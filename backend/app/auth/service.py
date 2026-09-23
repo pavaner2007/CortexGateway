@@ -20,13 +20,12 @@ Security invariants:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.exceptions import AuthenticationError, AuthorizationError
+from app.auth.exceptions import AuthenticationError
 from app.auth.models import APIKey, Organization, Team
 from app.auth.schemas import RequestContext
 from app.auth.security import (
@@ -72,7 +71,7 @@ class AuthService:
         )
         return org
 
-    async def get_organization(self, org_id: str) -> Optional[Organization]:
+    async def get_organization(self, org_id: str) -> Organization | None:
         """Retrieve an organization by ID. Returns None if not found."""
         result = await self._session.execute(
             select(Organization).where(Organization.id == org_id)
@@ -96,14 +95,14 @@ class AuthService:
         )
         return team
 
-    async def get_team(self, team_id: str) -> Optional[Team]:
+    async def get_team(self, team_id: str) -> Team | None:
         """Retrieve a team by ID. Returns None if not found."""
         result = await self._session.execute(
             select(Team).where(Team.id == team_id)
         )
         return result.scalar_one_or_none()
 
-    async def list_teams(self, organization_id: str) -> List[Team]:
+    async def list_teams(self, organization_id: str) -> list[Team]:
         """List all teams for an organization."""
         result = await self._session.execute(
             select(Team)
@@ -119,7 +118,7 @@ class AuthService:
         team_id: str,
         name: str,
         role: str,
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
     ) -> tuple[APIKey, str]:
         """
         Generate a new API key, store its hash, and persist to DB.
@@ -154,7 +153,7 @@ class AuthService:
         )
         return key, plaintext
 
-    async def list_api_keys(self, team_id: str) -> List[APIKey]:
+    async def list_api_keys(self, team_id: str) -> list[APIKey]:
         """List all API keys for a team (metadata only — no key_hash in response schema)."""
         result = await self._session.execute(
             select(APIKey)
@@ -163,7 +162,7 @@ class AuthService:
         )
         return list(result.scalars().all())
 
-    async def get_api_key(self, key_id: str, team_id: str) -> Optional[APIKey]:
+    async def get_api_key(self, key_id: str, team_id: str) -> APIKey | None:
         """Retrieve a specific API key scoped to a team (prevents cross-team access)."""
         result = await self._session.execute(
             select(APIKey).where(
@@ -173,7 +172,7 @@ class AuthService:
         )
         return result.scalar_one_or_none()
 
-    async def revoke_api_key(self, key_id: str, team_id: str) -> Optional[APIKey]:
+    async def revoke_api_key(self, key_id: str, team_id: str) -> APIKey | None:
         """
         Soft-revoke an API key by setting revoked_at.
 
@@ -184,7 +183,7 @@ class AuthService:
         if key is None:
             return None
 
-        key.revoked_at = datetime.now(timezone.utc)
+        key.revoked_at = datetime.now(UTC)
         await self._session.flush()
 
         logger.info(
@@ -290,7 +289,7 @@ class AuthService:
                 await session.execute(
                     update(APIKey)
                     .where(APIKey.id == key_id)
-                    .values(last_used_at=datetime.now(timezone.utc))
+                    .values(last_used_at=datetime.now(UTC))
                 )
                 # session commit is handled by the context manager
         except Exception as exc:  # pragma: no cover

@@ -12,10 +12,9 @@ Security rules:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
-
 
 BudgetPeriod = Literal["daily", "weekly", "monthly"]
 BudgetPolicy = Literal["BLOCK", "WARN", "DOWNGRADE"]
@@ -53,13 +52,13 @@ class BudgetCreate(BaseModel):
 class BudgetUpdate(BaseModel):
     """Request body for updating an existing team budget (PATCH — all fields optional)."""
 
-    limit_amount: Optional[float] = Field(
+    limit_amount: float | None = Field(
         None, gt=0, description="Updated spending limit in USD."
     )
-    policy: Optional[BudgetPolicy] = Field(
+    policy: BudgetPolicy | None = Field(
         None, description="Updated enforcement policy."
     )
-    enabled: Optional[bool] = Field(
+    enabled: bool | None = Field(
         None, description="Enable or disable the budget."
     )
     # period cannot be changed without resetting usage — not supported in PATCH.
@@ -88,7 +87,7 @@ class BudgetResponse(BaseModel):
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_with_derived(cls, budget: object) -> "BudgetResponse":
+    def from_orm_with_derived(cls, budget: object) -> BudgetResponse:
         """Build response including derived fields from ORM object."""
         return cls(
             id=budget.id,  # type: ignore[attr-defined]

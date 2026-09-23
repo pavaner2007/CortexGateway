@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Cortex Gateway — Python Project Configuration
+#
+# Tools configured here:
+#   ruff   — fast Python linter (replaces flake8/isort/pyupgrade)
+#   mypy   — static type checker
+#   pytest — test runner (settings also in pytest.ini for backwards compat)
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tool.ruff]
+# Python target version — must match runtime Dockerfile (python:3.12-slim)
+target-version = "py312"
+line-length = 100
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (undefined names, unused imports)
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade (modern Python syntax)
+    "B",   # flake8-bugbear (common bugs)
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long — handled by formatter, not linter
+    "B008",  # do not perform function call in default argument (FastAPI Depends pattern)
+    "SIM117", # nested with statements — readability choice
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files: allow assert statements, unused imports for fixtures
+"tests/**" = ["F401", "F811"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# mypy — static type checking
+#
+# Known typing debt:
+#   - app/observability/tracing.py: opentelemetry stubs not in dev environment
+#   - app/providers/*: third-party SDK types incomplete
+#   - Some SQLAlchemy async patterns require sqlalchemy[mypy] plugin
+#
+# mypy is run in CI with --ignore-missing-imports to avoid false failures from
+# missing third-party stubs (opentelemetry, google-generativeai, groq, etc.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app"]
+strict = false
+
+# Ignore missing stubs for third-party packages not shipping inline types
+ignore_missing_imports = true
+
+# Enforce typed return values for our own code
+disallow_untyped_defs = false    # gradual adoption — too many violations currently
+warn_return_any = false
+warn_unused_configs = true
+warn_unused_ignores = true
+
+# Known typing limitations (document, not suppress blindly):
+# - opentelemetry SDK stubs absent in test environment
+# - google-generativeai has partial stubs
+# - groq SDK has partial stubs
+# These are accepted limitations; see docs/deployment.md Known Limitations.
+
+[[tool.mypy.overrides]]
+module = [
+    "opentelemetry.*",
+    "google.generativeai.*",
+    "groq.*",
+    "prometheus_client.*",
+    "loguru.*",
+    "asyncpg.*",
+    "aiosqlite.*",
+    "respx.*",
+]
+ignore_missing_imports = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# pytest
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

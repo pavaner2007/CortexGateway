@@ -23,7 +23,6 @@ Module-level singleton:
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, List, Optional
 
 from app.routing.models import ModelMetadata
 
@@ -41,7 +40,7 @@ class ModelMetadataCatalog:
         self,
         ollama_default_cost: float = 0.0,
     ) -> None:
-        self._catalog: Dict[str, ModelMetadata] = {}
+        self._catalog: dict[str, ModelMetadata] = {}
         self._ollama_default_cost = ollama_default_cost
         self._lock = asyncio.Lock()
 
@@ -61,7 +60,7 @@ class ModelMetadataCatalog:
         service = ModelRegistryService(session=session)
         entries = await service.get_all_for_catalog()
 
-        new_catalog: Dict[str, ModelMetadata] = {}
+        new_catalog: dict[str, ModelMetadata] = {}
         for entry in entries:
             key = f"{entry.provider}:{entry.model_name}"
             new_catalog[key] = ModelMetadata(
@@ -117,7 +116,7 @@ class ModelMetadataCatalog:
         is_ollama = provider.lower() == "ollama"
         cost = self._ollama_default_cost if is_ollama else 0.0005
         baseline_lat = 300.0 if is_ollama else 500.0
-        caps: List[str] = ["text", "code", "json"]
+        caps: list[str] = ["text", "code", "json"]
 
         if "vision" in model.lower() or "llava" in model.lower():
             caps.append("vision")
@@ -131,7 +130,7 @@ class ModelMetadataCatalog:
             baseline_latency_ms=baseline_lat,
         )
 
-    def provider_model_names(self, provider: str) -> List[str]:
+    def provider_model_names(self, provider: str) -> list[str]:
         """
         Return model names registered for a specific provider.
         Used by CandidateBuilder as fallback when provider.list_models() is empty.

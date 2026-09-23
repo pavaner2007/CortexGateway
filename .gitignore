@@ -72,3 +72,11 @@ logs/
 .Spotlight-V100
 .Trashes
 ehthumbs.db
+
+# -- Secrets / Certificates (NEVER commit private keys or certs)
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer

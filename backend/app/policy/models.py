@@ -11,8 +11,8 @@ Runtime behaviour is governed by this table.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
@@ -22,7 +22,7 @@ from app.database.base import Base
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_uuid() -> str:
@@ -52,7 +52,7 @@ class TeamPolicyModel(Base):
     )
 
     # Normalized JSONB — validated by TeamPolicyInput Pydantic schema before storage.
-    policy: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     # Soft-disable without deleting the row (reserved for future use).
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -65,7 +65,7 @@ class TeamPolicyModel(Base):
     )
 
     # Relationships
-    team: Mapped["Team"] = relationship("Team")  # type: ignore[name-defined]
+    team: Mapped[Team] = relationship("Team")  # type: ignore[name-defined]
 
     __table_args__ = (
         UniqueConstraint("team_id", name="uq_team_policies_team_id"),

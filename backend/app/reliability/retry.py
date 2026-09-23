@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
 
 
 class RetryPolicy:
@@ -25,7 +25,7 @@ class RetryPolicy:
         base_delay_seconds: float = 0.25,
         max_delay_seconds: float = 2.0,
         jitter: bool = True,
-        sleep_func: Optional[Callable[[float], Awaitable[None]]] = None,
+        sleep_func: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.max_retries = max_retries
         self.base_delay_seconds = base_delay_seconds

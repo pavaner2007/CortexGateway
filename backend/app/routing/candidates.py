@@ -24,7 +24,6 @@ Phase 9A — Ollama intersection:
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
 
 from app.core.logging import logger
 from app.providers.registry import ProviderRegistry
@@ -46,7 +45,7 @@ class CandidateBuilder:
         self._metadata_catalog = metadata_catalog
         self._stats_tracker = stats_tracker
 
-    async def build_candidates(self) -> List[RoutingCandidate]:
+    async def build_candidates(self) -> list[RoutingCandidate]:
         """
         Build candidate representations for all models available across
         all currently registered providers.
@@ -59,7 +58,7 @@ class CandidateBuilder:
         if not registered_providers:
             return []
 
-        candidates: List[RoutingCandidate] = []
+        candidates: list[RoutingCandidate] = []
 
         async def _inspect_provider(p_info):
             try:
@@ -137,9 +136,9 @@ class CandidateBuilder:
 
 
 def _resolve_ollama_models(
-    live_models: List[str],
-    catalog_models: List[str],
-) -> List[str]:
+    live_models: list[str],
+    catalog_models: list[str],
+) -> list[str]:
     """
     Compute Ollama-eligible models = registry ∩ installed.
 

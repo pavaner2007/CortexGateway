@@ -20,9 +20,9 @@ Rules:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
-from app.guardrails.base import GuardrailResult, GuardrailRunResult
+from app.guardrails.base import GuardrailRunResult
 from app.guardrails.injection import InjectionGuardrail
 from app.guardrails.pii import PiiGuardrail
 from app.guardrails.prompt_size import PromptSizeGuardrail
@@ -38,7 +38,7 @@ class GuardrailRunner:
     """
 
     @staticmethod
-    def build_prompt(request: "ChatCompletionRequest") -> str:
+    def build_prompt(request: ChatCompletionRequest) -> str:
         """
         Combine all message contents into a single string for pattern matching.
 
@@ -50,8 +50,8 @@ class GuardrailRunner:
     @classmethod
     def run(
         cls,
-        request: "ChatCompletionRequest",
-        policy: "GuardrailsPolicy",
+        request: ChatCompletionRequest,
+        policy: GuardrailsPolicy,
     ) -> GuardrailRunResult:
         """
         Execute all enabled guardrails in order and aggregate results.

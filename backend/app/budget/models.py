@@ -25,8 +25,7 @@ Policy values (enforced by BudgetService):
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -43,7 +42,7 @@ from app.database.base import Base
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_uuid() -> str:
@@ -108,7 +107,7 @@ class Budget(Base):
     )
 
     # ── Relationships ─────────────────────────────────────────────────────────
-    team: Mapped["Team"] = relationship("Team")  # type: ignore[name-defined]
+    team: Mapped[Team] = relationship("Team")  # type: ignore[name-defined]
 
     __table_args__ = (
         # One active budget per team
@@ -135,7 +134,7 @@ class Budget(Base):
     @property
     def is_period_expired(self) -> bool:
         """True if the current period has ended and needs rollover."""
-        return datetime.now(timezone.utc) >= self.period_end
+        return datetime.now(UTC) >= self.period_end
 
     def __repr__(self) -> str:  # pragma: no cover
         return (

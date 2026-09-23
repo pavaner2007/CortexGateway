@@ -36,7 +36,7 @@ Phase 9E additions:
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -94,7 +94,7 @@ class GuardrailsPolicy(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    max_prompt_length: Optional[int] = None
+    max_prompt_length: int | None = None
     pii_detection: Literal["off", "warn", "block"] = "off"
     injection_detection: Literal["off", "warn", "block"] = "off"
 
@@ -157,7 +157,7 @@ class ExperimentConfig(BaseModel):
     id: str
     version: int = 1
     type: Literal["ab_test", "canary"]
-    arms: List[ExperimentArm]
+    arms: list[ExperimentArm]
 
     @field_validator("id")
     @classmethod
@@ -174,7 +174,7 @@ class ExperimentConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_arms(self) -> "ExperimentConfig":
+    def validate_arms(self) -> ExperimentConfig:
         arms = self.arms
         if len(arms) < 2:
             raise ValueError(f"experiment must have at least 2 arms, got {len(arms)}")
@@ -200,12 +200,12 @@ class TeamPolicyInput(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    routing: Optional[RoutingPolicy] = None
-    fallback: Optional[FallbackPolicy] = None
-    budget: Optional[BudgetPolicySection] = None
-    cache: Optional[CachePolicy] = None
-    experiment: Optional[ExperimentConfig] = None
-    guardrails: Optional[GuardrailsPolicy] = None
+    routing: RoutingPolicy | None = None
+    fallback: FallbackPolicy | None = None
+    budget: BudgetPolicySection | None = None
+    cache: CachePolicy | None = None
+    experiment: ExperimentConfig | None = None
+    guardrails: GuardrailsPolicy | None = None
 
 
 class ResolvedPolicy(BaseModel):
@@ -221,7 +221,7 @@ class ResolvedPolicy(BaseModel):
     budget: BudgetPolicySection
     cache: CachePolicy
     source: Literal["global", "team"]
-    experiment: Optional[ExperimentConfig] = None
+    experiment: ExperimentConfig | None = None
     guardrails: GuardrailsPolicy = GuardrailsPolicy()
 
 

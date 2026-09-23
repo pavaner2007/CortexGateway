@@ -42,7 +42,7 @@ Cardinality contract:
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Gauge, Histogram, REGISTRY
+from prometheus_client import Counter, Gauge, Histogram
 
 # ── Buckets tuned for LLM workloads (10ms → 120s) ──────────────────────────
 _LATENCY_BUCKETS = (

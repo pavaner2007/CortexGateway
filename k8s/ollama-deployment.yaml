@@ -1,0 +1,118 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Cortex Gateway — Ollama Kubernetes Deployment (OPTIONAL / EXAMPLE)
+#
+# STATUS: Optional — only deploy if running Ollama inside Kubernetes.
+#
+# Recommended production architecture:
+#   Kubernetes Gateway → Network → Dedicated Ollama/GPU host
+#
+# Reasons to prefer an external Ollama host:
+#   1. GPU resources are not guaranteed in all K8s clusters
+#   2. Large model weights (~4-70GB) make pod startup slow
+#   3. Model pulls should not happen automatically during deployment
+#   4. GPU-optimized nodes require node selectors / tolerations
+#
+# If you DO want Ollama in Kubernetes:
+#   - Configure nodeSelector/tolerations for GPU nodes
+#   - Pre-pull models before traffic: kubectl exec <pod> -- ollama pull <model>
+#   - Consider a PVC for model storage (avoid re-downloading on pod restart)
+#   - Set OLLAMA_BASE_URL=http://ollama-service.cortex-gateway.svc.cluster.local:11434
+#     in the ConfigMap
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: cortex-gateway
+  labels:
+    app.kubernetes.io/name: cortex-gateway
+    app.kubernetes.io/component: ollama
+  annotations:
+    # Mark as optional — this manifest is an example, not a required component
+    cortex-gateway/optional: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  strategy:
+    type: Recreate    # model weights are on a PVC — no parallel pods
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      # Uncomment for GPU nodes:
+      # nodeSelector:
+      #   accelerator: nvidia-gpu
+      # tolerations:
+      #   - key: nvidia.com/gpu
+      #     operator: Exists
+      #     effect: NoSchedule
+
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 11434
+
+          resources:
+            requests:
+              cpu:    "1000m"
+              memory: "4Gi"
+            limits:
+              cpu:    "4000m"
+              memory: "16Gi"
+            # GPU limit (uncomment for NVIDIA GPU):
+            # limits:
+            #   nvidia.com/gpu: "1"
+
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+
+          readinessProbe:
+            exec:
+              command: ["ollama", "list"]
+            initialDelaySeconds: 30
+            periodSeconds:       15
+            failureThreshold:    5
+            timeoutSeconds:      10
+
+      volumes:
+        - name: ollama-data
+          persistentVolumeClaim:
+            claimName: ollama-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-service
+  namespace: cortex-gateway
+  labels:
+    app.kubernetes.io/name: cortex-gateway
+    app.kubernetes.io/component: ollama
+spec:
+  selector:
+    app: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models-pvc
+  namespace: cortex-gateway
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi    # adjust based on model sizes; Llama 3 8B ≈ 4.7GB, 70B ≈ 39GB
+  storageClassName: standard    # update to your cluster's StorageClass

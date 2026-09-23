@@ -13,14 +13,15 @@ Provides deterministic tie-breaking so identical inputs always select the same c
 
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple, Tuple
+from typing import NamedTuple
+
 from app.routing.models import RoutingCandidate
 
 
 class ScoredCandidate(NamedTuple):
     candidate: RoutingCandidate
     total_score: float
-    score_breakdown: Dict[str, float]
+    score_breakdown: dict[str, float]
 
 
 class CandidateScorer:
@@ -32,7 +33,7 @@ class CandidateScorer:
         success_w: float,
         latency_w: float,
         cost_w: float,
-    ) -> Tuple[float, float, float, float]:
+    ) -> tuple[float, float, float, float]:
         """Normalize arbitrary positive weights so their sum equals 1.0."""
         total = health_w + success_w + latency_w + cost_w
         if total <= 0:
@@ -46,14 +47,14 @@ class CandidateScorer:
 
     def score_candidates(
         self,
-        candidates: List[RoutingCandidate],
+        candidates: list[RoutingCandidate],
         health_weight: float = 0.30,
-        success_rate_weight: Optional[float] = None,
+        success_rate_weight: float | None = None,
         latency_weight: float = 0.20,
         cost_weight: float = 0.20,
-        success_weight: Optional[float] = None,
+        success_weight: float | None = None,
         **kwargs: float,
-    ) -> List[ScoredCandidate]:
+    ) -> list[ScoredCandidate]:
         """
         Score and rank candidates deterministically in descending order.
 
@@ -85,7 +86,7 @@ class CandidateScorer:
         max_cost = max(costs)
         min_paid_cost = min(paid_costs) if paid_costs else 0.0
 
-        scored: List[ScoredCandidate] = []
+        scored: list[ScoredCandidate] = []
 
         for c in candidates:
             # 1. Health factor: 1.0 if healthy, else 0.0
@@ -104,9 +105,7 @@ class CandidateScorer:
 
             # 4. Cost factor: lower cost -> higher score
             c_cost = c.cost_per_1k_tokens
-            if max_cost == min_cost:
-                cost_score = 1.0
-            elif c_cost == 0.0:
+            if max_cost == min_cost or c_cost == 0.0:
                 cost_score = 1.0
             elif min_cost == 0.0 and min_paid_cost > 0.0:
                 # Free models exist; paid models receive scaled score capped below free tier

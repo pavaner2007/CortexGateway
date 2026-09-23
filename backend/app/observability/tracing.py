@@ -30,7 +30,7 @@ Trace correlation:
 from __future__ import annotations
 
 import contextlib
-from typing import Generator, Optional
+from collections.abc import Generator
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -90,7 +90,7 @@ def get_tracer() -> trace.Tracer:
     return trace.get_tracer("cortex.gateway")
 
 
-def get_current_trace_id() -> Optional[str]:
+def get_current_trace_id() -> str | None:
     """
     Return the current OTel trace ID as a 32-char hex string, or None.
 

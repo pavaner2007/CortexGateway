@@ -31,10 +31,9 @@ Prefix stored in DB (first 20 chars of full key):
 
 from __future__ import annotations
 
-import hmac
 import hashlib
+import hmac
 import secrets
-
 
 # API key prefix identifies Cortex Gateway keys visually in logs / UIs
 _KEY_PREFIX = "cxg_"

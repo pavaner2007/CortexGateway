@@ -17,7 +17,7 @@ The admin API key plaintext is returned ONCE in the response.
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
@@ -63,7 +63,7 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 async def bootstrap(
     body: BootstrapRequest,
     credentials: Annotated[
-        Optional[HTTPAuthorizationCredentials], Depends(_bearer_scheme)
+        HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)
     ] = None,
     session: AsyncSession = Depends(get_db_dependency),
 ) -> BootstrapResponse:

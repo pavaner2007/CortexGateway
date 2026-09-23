@@ -1,0 +1,289 @@
+name: cortex-gateway-prod
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cortex Gateway — Production Docker Compose
+#
+# Differences from docker-compose.yml (development):
+#   - Uses pre-built images (no `build:` blocks with source bind mounts)
+#   - NGINX reverse proxy on port 80 handles all ingress
+#   - ENVIRONMENT=production
+#   - No Vite dev server — frontend served from built nginx container
+#   - restart: unless-stopped on all long-running services
+#   - Resource limits (cpu, memory) on all services
+#   - Ollama optional — comment out if not needed
+#   - Prometheus / Grafana optional observability stack
+#
+# Prerequisites:
+#   1. Build images:
+#        docker build -t cortex-backend:latest ./backend
+#        docker build -t cortex-frontend:latest ./frontend
+#        (or use your registry: ghcr.io/yourorg/cortex-backend:latest)
+#
+#   2. Create ./backend/.env from backend/.env.example with real production values.
+#      Key values to change:
+#        POSTGRES_PASSWORD   — strong random password
+#        SECRET_KEY          — long random string (32+ chars)
+#        API_KEY_PEPPER      — long random string (32+ chars)
+#        CORTEX_BOOTSTRAP_TOKEN — strong random token
+#        ENVIRONMENT=production
+#
+#   3. Run:
+#        docker compose -f docker-compose.prod.yml up -d
+#
+#   4. Run migrations (first deploy only, or after upgrade):
+#        docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
+#
+# Ports exposed to host:
+#   80  → NGINX (frontend + backend API via /api/*)
+#   (postgres and redis ports are NOT exposed to the host in production)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: cortex-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-cortex_gateway}
+      POSTGRES_USER:     ${POSTGRES_USER:-cortex_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # NOTE: port NOT exposed to host in production — only accessible within Docker network
+    networks:
+      - cortex-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cortex_user} -d ${POSTGRES_DB:-cortex_gateway}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: cortex-redis-prod
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save 60 1
+    volumes:
+      - redis_data:/data
+    # NOTE: port NOT exposed to host in production
+    networks:
+      - cortex-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+  # ── Backend ─────────────────────────────────────────────────────────────────
+  backend:
+    image: cortex-backend:latest
+    # Use your registry image in real production:
+    # image: ghcr.io/yourorg/cortex-gateway-backend:${IMAGE_TAG:-latest}
+    container_name: cortex-backend-prod
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override .env values with Docker service names for internal networking
+      POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     "5432"
+      REDIS_HOST:        redis
+      REDIS_PORT:        "6379"
+      DATABASE_URL:      ""   # auto-composed from POSTGRES_* vars
+      REDIS_URL:         ""   # auto-composed from REDIS_* vars
+      ENVIRONMENT:       production
+      OLLAMA_BASE_URL:   http://ollama:11434
+      CORS_ORIGINS:      "http://nginx,http://localhost"
+      OTEL_ENABLED:      ${OTEL_ENABLED:-false}
+    networks:
+      - cortex-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  # ── Frontend ────────────────────────────────────────────────────────────────
+  frontend:
+    image: cortex-frontend:latest
+    # Use your registry image in real production:
+    # image: ghcr.io/yourorg/cortex-gateway-frontend:${IMAGE_TAG:-latest}
+    container_name: cortex-frontend-prod
+    restart: unless-stopped
+    networks:
+      - cortex-internal
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+
+  # ── NGINX Reverse Proxy (production ingress) ────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: cortex-nginx-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # TLS: uncomment and configure cert volumes for HTTPS:
+      # - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # TLS certificates (mount your cert/key here):
+      # - /etc/letsencrypt/live/yourdomain.com/fullchain.pem:/etc/ssl/certs/cert.pem:ro
+      # - /etc/letsencrypt/live/yourdomain.com/privkey.pem:/etc/ssl/private/key.pem:ro
+    networks:
+      - cortex-internal
+    depends_on:
+      - backend
+      - frontend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 64M
+        reservations:
+          cpus: "0.05"
+          memory: 16M
+
+  # ── Ollama (Optional — Local / Self-Hosted LLM Runtime) ────────────────────
+  # Remove or comment out this service if using only cloud providers (Gemini/Groq).
+  # Ollama requires a host with sufficient CPU/GPU resources.
+  # See docs/deployment.md — Ollama Production Architecture.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cortex-ollama-prod
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - cortex-internal
+    # GPU access (uncomment for NVIDIA GPU host):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Prometheus (Optional Observability) ────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: cortex-prometheus-prod
+    restart: unless-stopped
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - cortex-internal
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  # ── Grafana (Optional Observability) ───────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: cortex-grafana-prod
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:?GF_ADMIN_PASSWORD must be set}
+      GF_SERVER_ROOT_URL:         ${GF_ROOT_URL:-http://localhost:3000}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - cortex-internal
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+networks:
+  cortex-internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  ollama_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

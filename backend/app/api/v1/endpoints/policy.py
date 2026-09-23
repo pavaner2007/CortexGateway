@@ -19,10 +19,10 @@ Body format (PUT):
 
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,12 +32,7 @@ from app.auth.schemas import RequestContext
 from app.database.session import get_db_dependency
 from app.policy.resolver import PolicyResolver
 from app.policy.schemas import (
-    GLOBAL_DEFAULT_POLICY,
-    BudgetPolicySection,
-    CachePolicy,
-    FallbackPolicy,
     ResolvedPolicy,
-    RoutingPolicy,
     TeamPolicyInput,
 )
 from app.policy.service import PolicyService
@@ -61,6 +56,7 @@ async def _resolve_team(
 ) -> None:
     """Validate team_id belongs to the caller's organisation."""
     from sqlalchemy import select
+
     from app.auth.models import Team
 
     result = await session.execute(
@@ -84,15 +80,15 @@ class PolicyResponse(BaseModel):
     """API response for GET / PUT policy endpoints."""
 
     team_id: str
-    policy: Dict[str, Any]
+    policy: dict[str, Any]
     source: Literal["global", "team"]
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
 
 
 def _to_response(
     team_id: str,
     resolved: ResolvedPolicy,
-    updated_at: Optional[str] = None,
+    updated_at: str | None = None,
 ) -> PolicyResponse:
     return PolicyResponse(
         team_id=team_id,
@@ -191,7 +187,7 @@ async def get_policy(
 # ── PUT ───────────────────────────────────────────────────────────────────────
 
 
-def _validate_experiment_arms(experiment: "Any") -> None:
+def _validate_experiment_arms(experiment: Any) -> None:
     """
     Config-time validation for experiment arms (Phase 9D).
 

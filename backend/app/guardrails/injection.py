@@ -32,7 +32,7 @@ Security:
 from __future__ import annotations
 
 import re
-from typing import List, Literal, Optional
+from typing import Literal
 
 from app.guardrails.base import GuardrailResult
 
@@ -40,7 +40,7 @@ from app.guardrails.base import GuardrailResult
 # Compiled injection patterns — compiled once at module load
 # ---------------------------------------------------------------------------
 
-_INJECTION_PHRASES: List[re.Pattern[str]] = [
+_INJECTION_PHRASES: list[re.Pattern[str]] = [
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
     re.compile(r"disregard\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
     re.compile(r"disregard\s+the\s+system\s+prompt", re.IGNORECASE),
@@ -70,7 +70,7 @@ class InjectionGuardrail:
     def __init__(self, action: Literal["off", "warn", "block"]) -> None:
         self._action = action
 
-    def check(self, prompt: str) -> Optional[GuardrailResult]:
+    def check(self, prompt: str) -> GuardrailResult | None:
         """
         Scan prompt for known injection phrases.
 

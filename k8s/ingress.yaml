@@ -1,0 +1,74 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cortex-gateway-ingress
+  namespace: cortex-gateway
+  labels:
+    app.kubernetes.io/name: cortex-gateway
+  annotations:
+    # ── NGINX Ingress Controller annotations ─────────────────────────────
+    nginx.ingress.kubernetes.io/proxy-body-size:           "1m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout:        "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout:        "120"
+    nginx.ingress.kubernetes.io/proxy-buffering:           "off"    # for streaming LLM responses
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+    # TLS: uncomment and configure cert-manager issuer
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx    # update to match your cluster's ingress class
+  # TLS: uncomment for HTTPS
+  # tls:
+  #   - hosts:
+  #       - your-domain.com
+  #     secretName: cortex-gateway-tls
+  rules:
+    - host: your-domain.com   # ← change to your actual domain
+      http:
+        paths:
+          # Backend API routes
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: cortex-backend
+                port:
+                  number: 8000
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: cortex-backend
+                port:
+                  number: 8000
+          - path: /version
+            pathType: Exact
+            backend:
+              service:
+                name: cortex-backend
+                port:
+                  number: 8000
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name: cortex-backend
+                port:
+                  number: 8000
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: cortex-backend
+                port:
+                  number: 8000
+          # Frontend SPA — catch-all
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cortex-frontend
+                port:
+                  number: 8080

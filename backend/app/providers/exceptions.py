@@ -19,8 +19,6 @@ Error codes map to HTTP status codes:
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 class ProviderException(Exception):
     """
@@ -35,7 +33,7 @@ class ProviderException(Exception):
     code: str = "PROVIDER_ERROR"
     status_code: int = 502
 
-    def __init__(self, message: str, *, details: Optional[str] = None) -> None:
+    def __init__(self, message: str, *, details: str | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.details = details  # internal only — never returned to clients

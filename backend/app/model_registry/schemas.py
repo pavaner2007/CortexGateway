@@ -17,9 +17,8 @@ List[str] format exactly, avoiding any conversion layer.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 # Exhaustive set of capability tokens recognized by the routing engine.
 # Phase 3 uses these strings directly; unknown values are rejected on write.
@@ -43,7 +42,7 @@ class ModelRegistryCreate(BaseModel):
 
     provider: str = Field(..., min_length=1, max_length=100)
     model_name: str = Field(..., min_length=1, max_length=255)
-    display_name: Optional[str] = Field(None, max_length=255)
+    display_name: str | None = Field(None, max_length=255)
 
     input_cost_per_1k: float = Field(
         default=0.0, ge=0.0, description="USD cost per 1,000 input tokens."
@@ -52,7 +51,7 @@ class ModelRegistryCreate(BaseModel):
         default=0.0, ge=0.0, description="USD cost per 1,000 output tokens."
     )
 
-    capabilities: List[str] = Field(
+    capabilities: list[str] = Field(
         default_factory=lambda: ["text"],
         description="Capability tokens. Allowed: text, vision, json, code, tools, "
         "function_calling, complex_reasoning.",
@@ -85,7 +84,7 @@ class ModelRegistryCreate(BaseModel):
 
     @field_validator("capabilities")
     @classmethod
-    def validate_capabilities(cls, v: List[str]) -> List[str]:
+    def validate_capabilities(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("capabilities must contain at least one entry.")
         unknown = set(v) - KNOWN_CAPABILITIES
@@ -109,17 +108,17 @@ class ModelRegistryCreate(BaseModel):
 class ModelRegistryUpdate(BaseModel):
     """Request body for PATCH /api/v1/models/{id}. All fields optional."""
 
-    display_name: Optional[str] = Field(None, max_length=255)
-    input_cost_per_1k: Optional[float] = Field(None, ge=0.0)
-    output_cost_per_1k: Optional[float] = Field(None, ge=0.0)
-    capabilities: Optional[List[str]] = None
-    context_window: Optional[int] = Field(None, gt=0)
-    baseline_latency_ms: Optional[float] = Field(None, gt=0.0)
-    enabled: Optional[bool] = None
+    display_name: str | None = Field(None, max_length=255)
+    input_cost_per_1k: float | None = Field(None, ge=0.0)
+    output_cost_per_1k: float | None = Field(None, ge=0.0)
+    capabilities: list[str] | None = None
+    context_window: int | None = Field(None, gt=0)
+    baseline_latency_ms: float | None = Field(None, gt=0.0)
+    enabled: bool | None = None
 
     @field_validator("capabilities")
     @classmethod
-    def validate_capabilities(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_capabilities(cls, v: list[str] | None) -> list[str] | None:
         if v is None:
             return v
         if not v:
@@ -147,11 +146,11 @@ class ModelRegistryResponse(BaseModel):
     id: str
     provider: str
     model_name: str
-    display_name: Optional[str]
+    display_name: str | None
     input_cost_per_1k: float
     output_cost_per_1k: float
     cost_per_1k_tokens: float
-    capabilities: List[str]
+    capabilities: list[str]
     context_window: int
     baseline_latency_ms: float
     enabled: bool
@@ -161,7 +160,7 @@ class ModelRegistryResponse(BaseModel):
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm(cls, entry: object) -> "ModelRegistryResponse":
+    def from_orm(cls, entry: object) -> ModelRegistryResponse:
         from app.model_registry.models import ModelRegistryEntry
         e: ModelRegistryEntry = entry  # type: ignore[assignment]
         return cls(
@@ -184,5 +183,5 @@ class ModelRegistryResponse(BaseModel):
 class ModelRegistryListResponse(BaseModel):
     """Paginated list of model registry entries."""
 
-    models: List[ModelRegistryResponse]
+    models: list[ModelRegistryResponse]
     total: int

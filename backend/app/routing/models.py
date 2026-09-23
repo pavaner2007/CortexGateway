@@ -6,7 +6,8 @@ Data structures and types for the Intelligent Routing Engine.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 RoutingMode = Literal[
@@ -40,7 +41,7 @@ class ModelMetadata(BaseModel):
         ge=0.0,
         description="Cost in USD per 1,000 output (completion) tokens.",
     )
-    capabilities: List[str] = Field(
+    capabilities: list[str] = Field(
         default_factory=lambda: ["text"],
         description="Supported capabilities (e.g. 'text', 'vision', 'code', 'json', 'tools').",
     )
@@ -63,12 +64,12 @@ class RoutingCandidate(BaseModel):
 
     provider: str
     model: str
-    capabilities: List[str] = Field(default_factory=lambda: ["text"])
+    capabilities: list[str] = Field(default_factory=lambda: ["text"])
     context_window: int = 8192
     cost_per_1k_tokens: float = 0.0
     is_healthy: bool = True
     baseline_latency_ms: float = 500.0
-    runtime_latency_ms: Optional[float] = None
+    runtime_latency_ms: float | None = None
     runtime_success_rate: float = 1.0
     total_requests: int = 0
 
@@ -93,8 +94,8 @@ class RoutingDecision(BaseModel):
         le=1.0,
         description="Final normalized score in [0.0, 1.0].",
     )
-    score_breakdown: Dict[str, float] = Field(
+    score_breakdown: dict[str, float] = Field(
         default_factory=dict,
         description="Breakdown of individual normalized factor scores.",
     )
-    candidate: Optional[RoutingCandidate] = None
+    candidate: RoutingCandidate | None = None

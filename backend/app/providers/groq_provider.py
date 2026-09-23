@@ -8,7 +8,6 @@ Translates Cortex ChatCompletionRequest → Groq API → ChatCompletionResponse.
 from __future__ import annotations
 
 import time
-from typing import List
 
 from groq import APIConnectionError, APIStatusError, APITimeoutError, AsyncGroq
 
@@ -31,7 +30,7 @@ from app.schemas.chat import (
     UsageMetadata,
 )
 
-_KNOWN_MODELS: List[str] = [
+_KNOWN_MODELS: list[str] = [
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
     "llama3-8b-8192",
@@ -155,7 +154,7 @@ class GroqProvider(BaseLLMProvider):
         except Exception:
             return False
 
-    async def list_models(self) -> List[str]:
+    async def list_models(self) -> list[str]:
         """Fetch available models from Groq API."""
         try:
             response = await self._client.models.list()

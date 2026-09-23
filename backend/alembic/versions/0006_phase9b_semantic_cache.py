@@ -17,7 +17,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "0006_phase9b_semantic_cache"
-down_revision: str = "0005_phase9a_model_registry"
+down_revision: str = "0005"
 branch_labels = None
 depends_on = None
 

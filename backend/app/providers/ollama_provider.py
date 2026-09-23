@@ -10,7 +10,7 @@ Uses asynchronous HTTP communication (httpx.AsyncClient) — no blocking I/O.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -86,7 +86,7 @@ class OllamaProvider(BaseLLMProvider):
             for msg in request.messages
         ]
 
-        options: Dict[str, Any] = {}
+        options: dict[str, Any] = {}
         if request.temperature is not None:
             options["temperature"] = request.temperature
         if request.top_p is not None:
@@ -96,7 +96,7 @@ class OllamaProvider(BaseLLMProvider):
         if request.stop:
             options["stop"] = request.stop
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": request.model,
             "messages": messages,
             "stream": False,
@@ -138,9 +138,9 @@ class OllamaProvider(BaseLLMProvider):
         finish_reason = data.get("done_reason") or ("stop" if data.get("done") else None)
 
         # Token usage evaluation counts
-        prompt_tokens: Optional[int] = data.get("prompt_eval_count")
-        completion_tokens: Optional[int] = data.get("eval_count")
-        total_tokens: Optional[int] = None
+        prompt_tokens: int | None = data.get("prompt_eval_count")
+        completion_tokens: int | None = data.get("eval_count")
+        total_tokens: int | None = None
         if prompt_tokens is not None and completion_tokens is not None:
             total_tokens = prompt_tokens + completion_tokens
 
@@ -191,7 +191,7 @@ class OllamaProvider(BaseLLMProvider):
         except Exception:
             return False
 
-    async def list_models(self) -> List[str]:
+    async def list_models(self) -> list[str]:
         """
         Fetch installed models dynamically from Ollama GET /api/tags.
 

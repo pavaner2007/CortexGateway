@@ -28,8 +28,8 @@ Revises: 0008
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0009"
-down_revision = "0008"
+revision = "0009_phase9e_guardrail_log"
+down_revision = "0008_phase9d_experiment_log"
 branch_labels = None
 depends_on = None
 

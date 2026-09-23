@@ -34,9 +34,7 @@ Redis key format:
 
 from __future__ import annotations
 
-import math
 import time
-from typing import Optional
 
 from redis.asyncio import Redis
 
@@ -110,7 +108,7 @@ class RateLimiter:
             raise RateLimitExceeded(retry_after=outcome.binding_result.retry_after_seconds)
     """
 
-    def __init__(self, redis: Optional[Redis]) -> None:
+    def __init__(self, redis: Redis | None) -> None:
         self._redis = redis
         # Pre-register the Lua script for efficiency (cached by Redis)
         self._script = None

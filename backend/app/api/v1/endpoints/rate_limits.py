@@ -16,8 +16,6 @@ Behavior:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -38,7 +36,7 @@ router = APIRouter(tags=["Rate Limit Management"])
 class TeamRateLimitSet(BaseModel):
     """Request body for setting per-team rate limit overrides."""
 
-    requests_per_minute: Optional[int] = Field(
+    requests_per_minute: int | None = Field(
         default=None,
         ge=1,
         description=(
@@ -47,7 +45,7 @@ class TeamRateLimitSet(BaseModel):
         ),
         examples=[200],
     )
-    requests_per_hour: Optional[int] = Field(
+    requests_per_hour: int | None = Field(
         default=None,
         ge=1,
         description=(
@@ -66,21 +64,21 @@ class TeamRateLimitResponse(BaseModel):
     effective_requests_per_minute: int = Field(
         description="Resolved limit — team override if set, else global default."
     )
-    effective_requests_per_hour: Optional[int] = Field(
+    effective_requests_per_hour: int | None = Field(
         description="Resolved hourly limit — team override if set, else None (no hourly cap)."
     )
     # Raw overrides (null = not overridden)
-    override_requests_per_minute: Optional[int] = Field(
+    override_requests_per_minute: int | None = Field(
         description="Raw per-team override for requests_per_minute. Null = global default in use."
     )
-    override_requests_per_hour: Optional[int] = Field(
+    override_requests_per_hour: int | None = Field(
         description="Raw per-team override for requests_per_hour. Null = hourly cap disabled."
     )
     # Global defaults for context
     global_requests_per_minute: int = Field(
         description="Global default requests-per-minute from settings."
     )
-    global_requests_per_hour: Optional[int] = Field(
+    global_requests_per_hour: int | None = Field(
         default=None,
         description="Global default requests-per-hour from settings (None = no hourly cap globally)."
     )
@@ -105,6 +103,7 @@ async def _resolve_team(
 ) -> None:
     """Validate team belongs to the authenticated admin's org."""
     from sqlalchemy import select
+
     from app.auth.models import Team
 
     result = await session.execute(

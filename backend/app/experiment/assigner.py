@@ -39,7 +39,6 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-from typing import Optional
 
 from app.core.logging import logger
 from app.experiment.schemas import ExperimentAssignment
@@ -58,8 +57,8 @@ class ExperimentAssigner:
         *,
         team_id: str,
         request_id: str,
-        experiment: Optional[ExperimentConfig],
-    ) -> Optional[ExperimentAssignment]:
+        experiment: ExperimentConfig | None,
+    ) -> ExperimentAssignment | None:
         """
         Assign a request to an experiment arm.
 

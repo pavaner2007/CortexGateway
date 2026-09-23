@@ -18,19 +18,12 @@ Failure handling:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import logger
 from app.policy.schemas import (
-    BudgetPolicySection,
-    CachePolicy,
-    FallbackPolicy,
     GLOBAL_DEFAULT_POLICY,
-    GuardrailsPolicy,
     ResolvedPolicy,
-    RoutingPolicy,
     TeamPolicyInput,
 )
 from app.policy.service import PolicyService
@@ -42,7 +35,7 @@ class PolicyResolver:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def resolve(self, team_id: Optional[str]) -> ResolvedPolicy:
+    async def resolve(self, team_id: str | None) -> ResolvedPolicy:
         """
         Return the effective ResolvedPolicy for a team.
 

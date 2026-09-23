@@ -24,7 +24,7 @@ Security:
 from __future__ import annotations
 
 import re
-from typing import List, Literal, Optional, Tuple
+from typing import Literal
 
 from app.guardrails.base import GuardrailResult
 
@@ -32,7 +32,7 @@ from app.guardrails.base import GuardrailResult
 # Compiled patterns — compiled once at module load
 # ---------------------------------------------------------------------------
 
-_PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
+_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "EMAIL_ADDRESS",
         re.compile(
@@ -111,7 +111,7 @@ class PiiGuardrail:
     def __init__(self, action: Literal["off", "warn", "block"]) -> None:
         self._action = action
 
-    def check(self, prompt: str) -> Optional[GuardrailResult]:
+    def check(self, prompt: str) -> GuardrailResult | None:
         """
         Scan prompt for PII patterns.
 

@@ -16,8 +16,6 @@ Design notes:
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,9 +68,9 @@ class ModelRegistryService:
 
     async def list_models(
         self,
-        provider: Optional[str] = None,
+        provider: str | None = None,
         enabled_only: bool = True,
-    ) -> List[ModelRegistryEntry]:
+    ) -> list[ModelRegistryEntry]:
         """
         List model registry entries.
 
@@ -107,7 +105,7 @@ class ModelRegistryService:
             raise ModelNotFoundError(model_id)
         return entry
 
-    async def get_all_for_catalog(self) -> List[ModelRegistryEntry]:
+    async def get_all_for_catalog(self) -> list[ModelRegistryEntry]:
         """
         Return all ENABLED entries for bulk catalog population.
         Called by ModelMetadataCatalog.load_from_db().
@@ -151,7 +149,7 @@ class ModelRegistryService:
 
     async def _get_by_provider_model(
         self, provider: str, model_name: str
-    ) -> Optional[ModelRegistryEntry]:
+    ) -> ModelRegistryEntry | None:
         result = await self._session.execute(
             select(ModelRegistryEntry).where(
                 ModelRegistryEntry.provider == provider,

@@ -10,9 +10,7 @@ API keys and secrets are NEVER returned.
 """
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
 
-from app.providers.exceptions import InvalidProviderError
 from app.providers.registry import ProviderRegistry, get_registry
 from app.schemas.chat import (
     ModelListResponse,

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Dict, Optional
 
 from app.core.logging import logger
 from app.reliability.errors import is_circuit_breaker_failure
@@ -40,7 +39,7 @@ class ProviderCircuitBreaker:
 
         self._state: CircuitState = CircuitState.CLOSED
         self._failure_count: int = 0
-        self._last_failure_time: Optional[float] = None
+        self._last_failure_time: float | None = None
         self._half_open_trial_count: int = 0
         self._lock = asyncio.Lock()
 
@@ -196,7 +195,7 @@ class CircuitBreakerRegistry:
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
         self.half_open_trials = half_open_trials
-        self._breakers: Dict[str, ProviderCircuitBreaker] = {}
+        self._breakers: dict[str, ProviderCircuitBreaker] = {}
 
     def get_breaker(self, provider: str) -> ProviderCircuitBreaker:
         """Retrieve or construct the circuit breaker for the given provider."""
@@ -228,7 +227,7 @@ class CircuitBreakerRegistry:
             breaker.reset()
 
 
-_circuit_breaker_registry_instance: Optional[CircuitBreakerRegistry] = None
+_circuit_breaker_registry_instance: CircuitBreakerRegistry | None = None
 
 
 def get_circuit_breaker_registry() -> CircuitBreakerRegistry:
@@ -246,7 +245,7 @@ def get_circuit_breaker_registry() -> CircuitBreakerRegistry:
     return _circuit_breaker_registry_instance
 
 
-def set_circuit_breaker_registry(reg: Optional[CircuitBreakerRegistry]) -> None:
+def set_circuit_breaker_registry(reg: CircuitBreakerRegistry | None) -> None:
     """Override the global registry singleton (useful for testing)."""
     global _circuit_breaker_registry_instance
     _circuit_breaker_registry_instance = reg

@@ -16,7 +16,6 @@ Gemini-specific terminology mapping (internal only):
 from __future__ import annotations
 
 import time
-from typing import List, Optional
 
 import google.generativeai as genai
 from google.api_core.exceptions import (
@@ -48,7 +47,7 @@ from app.schemas.chat import (
     UsageMetadata,
 )
 
-_KNOWN_MODELS: List[str] = [
+_KNOWN_MODELS: list[str] = [
     "gemini-1.5-pro",
     "gemini-1.5-flash",
     "gemini-1.5-flash-8b",
@@ -80,9 +79,9 @@ class GeminiProvider(BaseLLMProvider):
     ) -> ChatCompletionResponse:
         """Execute chat completion via Gemini and normalize the response."""
         # Separate system prompt from conversation messages
-        system_instruction: Optional[str] = None
+        system_instruction: str | None = None
         history = []
-        last_user_content: Optional[str] = None
+        last_user_content: str | None = None
 
         for msg in request.messages:
             if msg.role == "system":
@@ -177,7 +176,7 @@ class GeminiProvider(BaseLLMProvider):
             )
 
         # Normalize finish reason
-        finish_reason: Optional[str] = None
+        finish_reason: str | None = None
         try:
             if response.candidates:
                 finish_reason = str(response.candidates[0].finish_reason.name).lower()
@@ -217,7 +216,7 @@ class GeminiProvider(BaseLLMProvider):
         except Exception:
             return False
 
-    async def list_models(self) -> List[str]:
+    async def list_models(self) -> list[str]:
         """Fetch available Gemini models."""
         try:
             models = genai.list_models()

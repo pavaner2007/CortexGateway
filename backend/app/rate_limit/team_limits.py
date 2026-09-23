@@ -18,8 +18,7 @@ Supported override fields:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
@@ -37,7 +36,7 @@ from app.database.base import Base
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_uuid() -> str:
@@ -62,10 +61,10 @@ class TeamRateLimit(Base):
         nullable=False,
     )
     # Nullable overrides — NULL means "use global default"
-    requests_per_minute: Mapped[Optional[int]] = mapped_column(
+    requests_per_minute: Mapped[int | None] = mapped_column(
         Integer, nullable=True, comment="Max requests per 60-second window. NULL = global default."
     )
-    requests_per_hour: Mapped[Optional[int]] = mapped_column(
+    requests_per_hour: Mapped[int | None] = mapped_column(
         Integer, nullable=True, comment="Max requests per 3600-second window. NULL = disabled (no hourly cap)."
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -93,7 +92,7 @@ class TeamRateLimitService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, team_id: str) -> Optional[TeamRateLimit]:
+    async def get(self, team_id: str) -> TeamRateLimit | None:
         """Return the TeamRateLimit row for team_id, or None if unset."""
         result = await self._session.execute(
             select(TeamRateLimit).where(TeamRateLimit.team_id == team_id)
@@ -103,8 +102,8 @@ class TeamRateLimitService:
     async def set(
         self,
         team_id: str,
-        requests_per_minute: Optional[int],
-        requests_per_hour: Optional[int],
+        requests_per_minute: int | None,
+        requests_per_hour: int | None,
     ) -> TeamRateLimit:
         """
         Create or update the rate limit override for team_id.
