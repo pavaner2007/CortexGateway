@@ -38,7 +38,6 @@ from app.schemas.chat import (
     UsageMetadata,
 )
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -110,14 +109,15 @@ def _mock_get_request_context() -> RequestContext:
 def client() -> TestClient:
     """Session-scoped test client with mocked infrastructure, providers, and auth."""
     from unittest.mock import AsyncMock as _AsyncMock
+
     from app.api.v1.endpoints.chat import (
-        _get_rate_limiter,
         _get_budget_service,
         _get_cost_calculator,
+        _get_rate_limiter,
     )
-    from app.rate_limit.limiter import RateLimiter
-    from app.budget.service import BudgetService
     from app.budget.cost import CostCalculator
+    from app.budget.service import BudgetService
+    from app.rate_limit.limiter import RateLimiter
     from app.routing.metadata import ModelMetadataCatalog
 
     # Phase 6 no-op overrides: disabled limiter, disabled budget, zero-cost calculator

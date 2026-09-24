@@ -37,7 +37,6 @@ from app.observability.metrics import (
     rate_limit_exceeded_total,
 )
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -165,6 +164,7 @@ class TestRequestLogWriter:
     async def test_write_success_log_calls_session(self) -> None:
         """A valid log_data dict results in a DB session add."""
         from contextlib import asynccontextmanager
+
         from app.observability.log_writer import write_request_log
 
         mock_session = AsyncMock()
@@ -206,6 +206,7 @@ class TestRequestLogWriter:
     async def test_write_log_skips_without_request_id(self) -> None:
         """Log with no request_id is silently skipped — session.add never called."""
         from contextlib import asynccontextmanager
+
         from app.observability.log_writer import write_request_log
 
         mock_session = AsyncMock()
@@ -343,6 +344,7 @@ class TestObservabilityIsolation:
         This is tested directly to avoid the complexity of full endpoint DI.
         """
         import asyncio
+
         from app.observability.log_writer import write_request_log
 
         # Patch get_db_session to raise so the DB write fails
@@ -396,8 +398,8 @@ class TestAnalyticsRBAC:
     ]
 
     def _make_client_with_role(self, role: str) -> TestClient:
-        from app.auth.schemas import RequestContext
         from app.auth.dependencies import get_request_context, require_admin
+        from app.auth.schemas import RequestContext
 
         ctx = RequestContext(
             organization_id="org-rbac",
@@ -429,8 +431,8 @@ class TestAnalyticsRBAC:
             return client
 
     def test_admin_can_access_analytics(self) -> None:
-        from app.auth.schemas import RequestContext
         from app.auth.dependencies import get_request_context
+        from app.auth.schemas import RequestContext
 
         ctx = RequestContext(
             organization_id="org-admin",
@@ -466,8 +468,8 @@ class TestAnalyticsRBAC:
                 app.dependency_overrides.clear()
 
     def test_member_gets_403_on_analytics(self) -> None:
-        from app.auth.schemas import RequestContext
         from app.auth.dependencies import get_request_context
+        from app.auth.schemas import RequestContext
 
         ctx = RequestContext(
             organization_id="org-member",
@@ -608,8 +610,8 @@ class TestMetricHelpers:
 class TestAnalyticsPagination:
     def test_analytics_requests_max_page_size_enforced(self) -> None:
         """page_size above MAX_PAGE_SIZE (200) must return 422."""
-        from app.auth.schemas import RequestContext
         from app.auth.dependencies import get_request_context
+        from app.auth.schemas import RequestContext
         from app.database.session import get_db_dependency
 
         ctx = RequestContext(
@@ -658,6 +660,7 @@ class TestTracingHelpers:
     def test_init_tracing_disabled_installs_noop(self) -> None:
         """init_tracing(enabled=False) must install a no-op tracer."""
         from opentelemetry import trace
+
         from app.observability.tracing import init_tracing
 
         init_tracing(enabled=False)

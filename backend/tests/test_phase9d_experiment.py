@@ -30,20 +30,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.experiment.assigner import ExperimentAssigner, _BUCKET_SIZE
+from app.experiment.assigner import _BUCKET_SIZE, ExperimentAssigner
 from app.experiment.schemas import ExperimentAssignment
 from app.policy.schemas import (
+    GLOBAL_DEFAULT_POLICY,
     BudgetPolicySection,
     CachePolicy,
     ExperimentArm,
     ExperimentConfig,
     FallbackPolicy,
-    GLOBAL_DEFAULT_POLICY,
     ResolvedPolicy,
     RoutingPolicy,
     TeamPolicyInput,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -53,7 +52,7 @@ def _make_experiment(
     exp_id: str = "test-exp",
     version: int = 1,
     exp_type: str = "ab_test",
-    arms: Optional[list] = None,
+    arms: list | None = None,
 ) -> ExperimentConfig:
     if arms is None:
         arms = [
@@ -69,7 +68,7 @@ def _make_experiment(
     )
 
 
-def _make_resolved_policy(experiment: Optional[ExperimentConfig] = None) -> ResolvedPolicy:
+def _make_resolved_policy(experiment: ExperimentConfig | None = None) -> ResolvedPolicy:
     return ResolvedPolicy(
         routing=RoutingPolicy(strategy="auto"),
         fallback=FallbackPolicy(enabled=True),
@@ -399,8 +398,15 @@ class TestCacheHit:
         response, the service returns immediately BEFORE step 2.5 experiment assignment.
         Verify experiment metadata fields on the returned response are None.
         """
-        from app.schemas.chat import ChatCompletionRequest, ChatCompletionResponse
-        from app.schemas.chat import ChatMessage, ResponseMetadata, UsageMetadata, ChatCompletionChoice, ChatMessageResponse
+        from app.schemas.chat import (
+            ChatCompletionChoice,
+            ChatCompletionRequest,
+            ChatCompletionResponse,
+            ChatMessage,
+            ChatMessageResponse,
+            ResponseMetadata,
+            UsageMetadata,
+        )
 
         # Build a fake cached response (cache_hit=True, no experiment fields)
         cached_resp = ChatCompletionResponse(
@@ -528,9 +534,10 @@ class TestRBACAndOrgIsolation:
         This is enforced by the require_admin dependency (Phase 5).
         We verify the policy endpoint uses require_admin.
         """
-        from app.auth.dependencies import require_admin
-        from app.api.v1.endpoints.policy import put_policy
         import inspect
+
+        from app.api.v1.endpoints.policy import put_policy
+        from app.auth.dependencies import require_admin
 
         # Check that require_admin is a dependency of put_policy
         sig = inspect.signature(put_policy)
@@ -543,8 +550,9 @@ class TestRBACAndOrgIsolation:
         _resolve_team checks that the team belongs to the caller's org.
         This is the org isolation gate for the policy endpoint.
         """
-        from app.api.v1.endpoints.policy import _resolve_team
         import inspect
+
+        from app.api.v1.endpoints.policy import _resolve_team
         sig = inspect.signature(_resolve_team)
         assert "context" in sig.parameters
         assert "team_id" in sig.parameters
@@ -643,8 +651,9 @@ class TestRequestLogSchema:
     """Verify RequestLog ORM has the new experiment columns."""
 
     def test_request_log_has_experiment_columns(self):
-        from app.observability.models import RequestLog
         import sqlalchemy as sa
+
+        from app.observability.models import RequestLog
 
         cols = {c.name for c in RequestLog.__table__.columns}
         assert "experiment_id" in cols
@@ -693,8 +702,12 @@ class TestLogWriter:
     def test_build_success_log_includes_experiment_fields(self):
         from app.observability.log_writer import build_success_log
         from app.schemas.chat import (
-            ChatCompletionResponse, ChatCompletionChoice, ChatMessage,
-            ChatMessageResponse, ResponseMetadata, UsageMetadata,
+            ChatCompletionChoice,
+            ChatCompletionResponse,
+            ChatMessage,
+            ChatMessageResponse,
+            ResponseMetadata,
+            UsageMetadata,
         )
 
         resp = ChatCompletionResponse(
@@ -724,8 +737,11 @@ class TestLogWriter:
     def test_build_success_log_null_experiment_for_cache_hit(self):
         from app.observability.log_writer import build_success_log
         from app.schemas.chat import (
-            ChatCompletionResponse, ChatCompletionChoice,
-            ChatMessageResponse, ResponseMetadata, UsageMetadata,
+            ChatCompletionChoice,
+            ChatCompletionResponse,
+            ChatMessageResponse,
+            ResponseMetadata,
+            UsageMetadata,
         )
 
         resp = ChatCompletionResponse(

@@ -140,6 +140,7 @@ class TestConstantTimeVerification:
     def test_uses_hmac_compare_digest(self):
         """Verify that the implementation uses hmac.compare_digest (not plain ==)."""
         import inspect
+
         from app.auth import security
         source = inspect.getsource(security.verify_api_key)
         assert "compare_digest" in source, (

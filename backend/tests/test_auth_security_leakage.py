@@ -16,7 +16,7 @@ Mandatory security invariants:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -100,7 +100,7 @@ class TestKeyHashNeverExposed:
         mock_key.role = "admin"
         mock_key.expires_at = None
         mock_key.revoked_at = None
-        mock_key.created_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        mock_key.created_at = datetime(2026, 9, 14, tzinfo=UTC)
         mock_key.last_used_at = None
         mock_key.key_hash = _FAKE_KEY_HASH  # must never appear in response
 
@@ -130,7 +130,7 @@ class TestKeyHashNeverExposed:
         mock_key.role = "admin"
         mock_key.expires_at = None
         mock_key.revoked_at = None
-        mock_key.created_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        mock_key.created_at = datetime(2026, 9, 14, tzinfo=UTC)
         mock_key.last_used_at = None
         mock_key.key_hash = _FAKE_KEY_HASH  # must never appear
 
@@ -175,7 +175,7 @@ class TestPlaintextKeyOnlyShownOnce:
         mock_key.key_prefix = "cxg_supersecretkey1"
         mock_key.role = "admin"
         mock_key.expires_at = None
-        mock_key.created_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        mock_key.created_at = datetime(2026, 9, 14, tzinfo=UTC)
         mock_key.key_hash = _FAKE_KEY_HASH
 
         mock_service = AsyncMock()
@@ -207,7 +207,7 @@ class TestPlaintextKeyOnlyShownOnce:
         mock_key.role = "admin"
         mock_key.expires_at = None
         mock_key.revoked_at = None
-        mock_key.created_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        mock_key.created_at = datetime(2026, 9, 14, tzinfo=UTC)
         mock_key.last_used_at = None
         mock_key.key_hash = _FAKE_KEY_HASH
 
@@ -285,16 +285,16 @@ class TestBootstrapResponse:
         mock_org.id = "org-001"
         mock_org.name = "Test Org"
         mock_org.slug = "test-org"
-        mock_org.created_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
-        mock_org.updated_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        mock_org.created_at = datetime(2026, 9, 14, tzinfo=UTC)
+        mock_org.updated_at = datetime(2026, 9, 14, tzinfo=UTC)
 
         mock_team = MagicMock(spec=Team)
         mock_team.id = "team-001"
         mock_team.organization_id = "org-001"
         mock_team.name = "Test Team"
         mock_team.slug = "test-team"
-        mock_team.created_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
-        mock_team.updated_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        mock_team.created_at = datetime(2026, 9, 14, tzinfo=UTC)
+        mock_team.updated_at = datetime(2026, 9, 14, tzinfo=UTC)
 
         mock_key = MagicMock(spec=APIKey)
         mock_key.id = "key-001"
@@ -302,7 +302,7 @@ class TestBootstrapResponse:
         mock_key.key_prefix = "cxg_supersecretkey1"
         mock_key.role = "admin"
         mock_key.expires_at = None
-        mock_key.created_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        mock_key.created_at = datetime(2026, 9, 14, tzinfo=UTC)
         mock_key.key_hash = _FAKE_KEY_HASH  # must not appear in response
 
         mock_service = AsyncMock()

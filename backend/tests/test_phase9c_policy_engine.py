@@ -67,7 +67,6 @@ from app.policy.schemas import (
     TeamPolicyInput,
 )
 
-
 # ── 1. GLOBAL_DEFAULT_POLICY values ─────────────────────────────────────────
 
 def test_global_default_routing_strategy():
@@ -368,8 +367,8 @@ class TestChatServicePolicyIntegration:
 
     def test_no_resolved_policy_uses_global_default(self):
         """resolved_policy=None → global default → routing mode 'auto'."""
-        from app.services.chat_service import ChatService
         from app.providers.registry import ProviderRegistry
+        from app.services.chat_service import ChatService
 
         registry = MagicMock(spec=ProviderRegistry)
         mock_exec = AsyncMock(return_value=self._make_response())
@@ -394,8 +393,8 @@ class TestChatServicePolicyIntegration:
 
     def test_resolved_policy_routing_strategy_used(self):
         """Policy routing.strategy='lowest_cost' flows into effective_routing_mode."""
-        from app.services.chat_service import ChatService
         from app.providers.registry import ProviderRegistry
+        from app.services.chat_service import ChatService
 
         policy = ResolvedPolicy(
             routing=RoutingPolicy(strategy="lowest_cost"),
@@ -431,8 +430,8 @@ class TestChatServicePolicyIntegration:
 
     def test_resolved_policy_cache_disabled_skips_lookup(self):
         """cache.enabled=False → semantic_cache.lookup never called."""
-        from app.services.chat_service import ChatService
         from app.providers.registry import ProviderRegistry
+        from app.services.chat_service import ChatService
 
         policy = ResolvedPolicy(
             routing=RoutingPolicy(strategy="auto"),
@@ -480,8 +479,8 @@ class TestChatServicePolicyIntegration:
 
     def test_resolved_policy_fallback_disabled_patches_request(self):
         """fallback.enabled=False → ReliabilityExecutor receives failover_enabled=False."""
-        from app.services.chat_service import ChatService
         from app.providers.registry import ProviderRegistry
+        from app.services.chat_service import ChatService
 
         policy = ResolvedPolicy(
             routing=RoutingPolicy(strategy="auto"),
@@ -523,8 +522,8 @@ class TestChatServicePolicyIntegration:
         budget.action from policy is used, not Budget.policy from DB.
         With WARN policy, BudgetExceeded is not raised even when over limit.
         """
-        from app.services.chat_service import ChatService
         from app.providers.registry import ProviderRegistry
+        from app.services.chat_service import ChatService
 
         policy = ResolvedPolicy(
             routing=RoutingPolicy(strategy="auto"),

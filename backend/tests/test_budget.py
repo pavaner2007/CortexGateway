@@ -20,7 +20,7 @@ Budget API endpoints use the HTTPX TestClient.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,9 +31,6 @@ from app.budget.exceptions import BudgetExceeded, RateLimitExceeded
 from app.budget.models import Budget
 from app.budget.schemas import BudgetCreate, BudgetUpdate
 from app.budget.service import BudgetService
-from app.routing.metadata import ModelMetadataCatalog
-from app.routing.models import ModelMetadata
-from app.schemas.chat import ChatMessage, UsageMetadata
 from app.policy.schemas import (
     BudgetPolicySection,
     CachePolicy,
@@ -41,6 +38,9 @@ from app.policy.schemas import (
     ResolvedPolicy,
     RoutingPolicy,
 )
+from app.routing.metadata import ModelMetadataCatalog
+from app.routing.models import ModelMetadata
+from app.schemas.chat import ChatMessage, UsageMetadata
 
 # Phase 9C: policy with DOWNGRADE budget action — used by downgrade tests
 # so ChatService reads action from the resolved policy (not the Budget DB row).
@@ -123,7 +123,7 @@ def _make_budget(
     period_offset_days: int = 30,
 ) -> Budget:
     """Build a Budget ORM mock object."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     budget = MagicMock(spec=Budget)
     budget.id = "budget-1"
     budget.team_id = team_id
@@ -261,7 +261,7 @@ async def test_budget_service_create():
     service = BudgetService(session=session)
     data = BudgetCreate(limit_amount=50.0, period="monthly", policy="BLOCK")
 
-    with patch.object(service, "_compute_period_end", return_value=datetime.now(timezone.utc) + timedelta(days=30)):
+    with patch.object(service, "_compute_period_end", return_value=datetime.now(UTC) + timedelta(days=30)):
         budget = MagicMock()
         session.refresh = AsyncMock(side_effect=lambda b: None)
         # Actually test that session.add was called with a Budget instance
@@ -363,7 +363,7 @@ async def test_budget_service_rollover_resets_usage():
     )
     budget.is_period_expired = True  # Force rollover
     budget.period = "monthly"
-    budget.period_end = datetime.now(timezone.utc) - timedelta(days=1)
+    budget.period_end = datetime.now(UTC) - timedelta(days=1)
 
     session = AsyncMock()
     result_mock = MagicMock()
@@ -454,10 +454,11 @@ def _make_context(role: str = "admin", team_id: str = "team-1", org_id: str = "o
 def budget_client():
     """TestClient with mocked auth, DB, and budget service."""
     from fastapi.testclient import TestClient
-    from app.main import app
+
+    from app.api.v1.endpoints.budget import _get_budget_service
     from app.auth.dependencies import get_request_context, require_admin
     from app.database.session import get_db_dependency
-    from app.api.v1.endpoints.budget import _get_budget_service
+    from app.main import app
 
     admin_ctx = _make_context(role="admin")
     member_ctx = _make_context(role="member")
@@ -546,7 +547,7 @@ def test_rate_limit_exceeded_exception_has_correct_status():
 def test_budget_period_rollover_compute_daily():
     """BudgetService._compute_period_end for daily period."""
     service = BudgetService(session=AsyncMock())
-    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
     end = service._compute_period_end("daily", now)
     assert end == now + timedelta(days=1)
 
@@ -554,7 +555,7 @@ def test_budget_period_rollover_compute_daily():
 def test_budget_period_rollover_compute_weekly():
     """BudgetService._compute_period_end for weekly period."""
     service = BudgetService(session=AsyncMock())
-    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
     end = service._compute_period_end("weekly", now)
     assert end == now + timedelta(weeks=1)
 
@@ -562,7 +563,7 @@ def test_budget_period_rollover_compute_weekly():
 def test_budget_period_rollover_compute_monthly():
     """BudgetService._compute_period_end for monthly period snaps to next month's 1st."""
     service = BudgetService(session=AsyncMock())
-    now = datetime(2026, 9, 15, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 15, 12, 0, 0, tzinfo=UTC)
     end = service._compute_period_end("monthly", now)
     # next month's 1st
     assert end.month == 10
@@ -574,7 +575,7 @@ def test_budget_period_rollover_compute_invalid():
     from app.budget.exceptions import BudgetConfigurationError
     service = BudgetService(session=AsyncMock())
     with pytest.raises(BudgetConfigurationError, match="Unknown budget period"):
-        service._compute_period_end("yearly", datetime.now(timezone.utc))
+        service._compute_period_end("yearly", datetime.now(UTC))
 
 
 def test_budget_remaining_amount_property():
@@ -602,19 +603,20 @@ async def test_chat_service_budget_downgrade_switches_to_cheaper_provider():
     3. Scores and selects the cheaper provider
     4. Request completes with downgraded provider and budget_downgraded=True in metadata
     """
-    from app.services.chat_service import ChatService
-    from app.schemas.chat import ChatCompletionRequest, ChatMessage
-    from app.providers.registry import ProviderRegistry
-    from app.routing.router import RoutingEngine
-    from app.reliability.executor import ReliabilityExecutor
     from app.auth.schemas import RequestContext
+    from app.providers.registry import ProviderRegistry
+    from app.reliability.executor import ReliabilityExecutor
+    from app.routing.router import RoutingEngine
     from app.schemas.chat import (
         ChatCompletionChoice,
+        ChatCompletionRequest,
         ChatCompletionResponse,
+        ChatMessage,
         ChatMessageResponse,
         ResponseMetadata,
         UsageMetadata,
     )
+    from app.services.chat_service import ChatService
 
     # 1. Setup mock providers: expensive groq vs cheap gemini
     registry = ProviderRegistry()
@@ -722,9 +724,9 @@ async def test_chat_service_budget_downgrade_switches_to_cheaper_provider():
 @pytest.mark.asyncio
 async def test_chat_service_budget_downgrade_no_affordable_candidate_raises_budget_exceeded():
     """When no candidates fit within remaining budget, raises BudgetExceeded (402)."""
-    from app.services.chat_service import ChatService
-    from app.schemas.chat import ChatCompletionRequest, ChatMessage
     from app.providers.registry import ProviderRegistry
+    from app.schemas.chat import ChatCompletionRequest, ChatMessage
+    from app.services.chat_service import ChatService
 
     registry = ProviderRegistry()
     mock_groq = MagicMock()
@@ -787,7 +789,7 @@ async def test_chat_service_budget_downgrade_no_affordable_candidate_raises_budg
 @pytest.mark.asyncio
 async def test_chat_service_budget_downgrade_ollama_always_affordable():
     """Ollama (zero cost) is selected as the always-affordable fallback candidate."""
-    from app.services.chat_service import ChatService
+    from app.providers.registry import ProviderRegistry
     from app.schemas.chat import (
         ChatCompletionChoice,
         ChatCompletionRequest,
@@ -797,7 +799,7 @@ async def test_chat_service_budget_downgrade_ollama_always_affordable():
         ResponseMetadata,
         UsageMetadata,
     )
-    from app.providers.registry import ProviderRegistry
+    from app.services.chat_service import ChatService
 
     registry = ProviderRegistry()
 
@@ -889,7 +891,7 @@ async def test_chat_service_budget_downgrade_ollama_always_affordable():
 @pytest.mark.asyncio
 async def test_chat_service_budget_downgrade_respects_required_capabilities():
     """Downgrade filters candidates to only those matching required capabilities."""
-    from app.services.chat_service import ChatService
+    from app.providers.registry import ProviderRegistry
     from app.schemas.chat import (
         ChatCompletionChoice,
         ChatCompletionRequest,
@@ -899,7 +901,7 @@ async def test_chat_service_budget_downgrade_respects_required_capabilities():
         ResponseMetadata,
         UsageMetadata,
     )
-    from app.providers.registry import ProviderRegistry
+    from app.services.chat_service import ChatService
 
     registry = ProviderRegistry()
 
@@ -1010,7 +1012,7 @@ async def test_chat_service_budget_downgrade_respects_required_capabilities():
 @pytest.mark.asyncio
 async def test_chat_service_budget_downgrade_not_triggered_if_original_fits():
     """If original candidate fits within budget, no downgrade occurs."""
-    from app.services.chat_service import ChatService
+    from app.providers.registry import ProviderRegistry
     from app.schemas.chat import (
         ChatCompletionChoice,
         ChatCompletionRequest,
@@ -1020,7 +1022,7 @@ async def test_chat_service_budget_downgrade_not_triggered_if_original_fits():
         ResponseMetadata,
         UsageMetadata,
     )
-    from app.providers.registry import ProviderRegistry
+    from app.services.chat_service import ChatService
 
     registry = ProviderRegistry()
     mock_groq = MagicMock()

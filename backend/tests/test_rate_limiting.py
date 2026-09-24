@@ -24,7 +24,6 @@ import pytest
 from app.rate_limit.limiter import RateLimiter
 from app.rate_limit.models import RateLimitOutcome, RateLimitResult
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_redis_mock(count: int, ttl: int = 55) -> MagicMock:
@@ -40,7 +39,7 @@ def _make_redis_mock(count: int, ttl: int = 55) -> MagicMock:
     return redis_mock
 
 
-def _make_counter_redis(counts: Dict[str, int], ttl: int = 55) -> MagicMock:
+def _make_counter_redis(counts: dict[str, int], ttl: int = 55) -> MagicMock:
     """
     Build a mock Redis client that returns per-key counts.
     Useful for testing hierarchy where different scopes have different counts.

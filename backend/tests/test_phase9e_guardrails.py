@@ -48,17 +48,16 @@ from app.guardrails.pii import PiiGuardrail
 from app.guardrails.prompt_size import PromptSizeGuardrail
 from app.guardrails.runner import GuardrailRunner
 from app.policy.schemas import (
+    GLOBAL_DEFAULT_POLICY,
     BudgetPolicySection,
     CachePolicy,
     FallbackPolicy,
-    GLOBAL_DEFAULT_POLICY,
     GuardrailsPolicy,
     ResolvedPolicy,
     RoutingPolicy,
     TeamPolicyInput,
 )
 from app.schemas.chat import ChatCompletionRequest, ChatMessage
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -70,7 +69,7 @@ def _make_request(content: str = "Hello there") -> ChatCompletionRequest:
 
 
 def _make_policy(
-    max_prompt_length: Optional[int] = None,
+    max_prompt_length: int | None = None,
     pii: str = "off",
     injection: str = "off",
 ) -> ResolvedPolicy:
@@ -490,8 +489,11 @@ def _override_ctx(ctx=None):
 
 def _make_mock_response():
     from app.schemas.chat import (
-        ChatCompletionResponse, ChatCompletionChoice,
-        ChatMessageResponse, ResponseMetadata, UsageMetadata,
+        ChatCompletionChoice,
+        ChatCompletionResponse,
+        ChatMessageResponse,
+        ResponseMetadata,
+        UsageMetadata,
     )
     return ChatCompletionResponse(
         provider="groq",
@@ -508,20 +510,23 @@ def _make_mock_response():
 
 @pytest.fixture(scope='module')
 def client():
-    from unittest.mock import AsyncMock as _AM, patch
-    from fastapi.testclient import TestClient
-    from app.main import app
-    from app.api.v1.endpoints.chat import (
-        _get_rate_limiter, _get_budget_service, _get_cost_calculator,
-    )
-    from app.rate_limit.limiter import RateLimiter
-    from app.budget.service import BudgetService
-    from app.budget.cost import CostCalculator
-    from app.routing.metadata import ModelMetadataCatalog
-
     # Stub opentelemetry so the lazy import in chat.py doesn't fail
     import sys
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock as _AM
+    from unittest.mock import MagicMock, patch
+
+    from fastapi.testclient import TestClient
+
+    from app.api.v1.endpoints.chat import (
+        _get_budget_service,
+        _get_cost_calculator,
+        _get_rate_limiter,
+    )
+    from app.budget.cost import CostCalculator
+    from app.budget.service import BudgetService
+    from app.main import app
+    from app.rate_limit.limiter import RateLimiter
+    from app.routing.metadata import ModelMetadataCatalog
     _otel_mods = [
         'opentelemetry', 'opentelemetry.trace',
         'opentelemetry.sdk', 'opentelemetry.sdk.resources',
@@ -878,8 +883,10 @@ class TestRequestLogGuardrailFields:
 
     def test_write_request_log_allowed_set_includes_guardrail_fields(self) -> None:
         """write_request_log allowed set must accept guardrail fields."""
+        import inspect
+        import textwrap
+
         from app.observability import log_writer
-        import inspect, textwrap
         src = inspect.getsource(log_writer.write_request_log)
         assert "guardrails_triggered" in src
         assert "guardrail_action" in src
@@ -924,7 +931,9 @@ class TestExperimentInteraction:
         """
         from app.experiment.assigner import ExperimentAssigner
         from app.policy.schemas import (
-            ExperimentArm, ExperimentConfig, GuardrailsPolicy,
+            ExperimentArm,
+            ExperimentConfig,
+            GuardrailsPolicy,
         )
 
         req = _make_request("user@block.com")

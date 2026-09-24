@@ -58,16 +58,15 @@ from app.semantic_cache.similarity import (
     extract_embedding_text,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def _make_request(
     user_msg: str = "What is the capital of France?",
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    system_msg: Optional[str] = None,
-    stream: Optional[bool] = False,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    system_msg: str | None = None,
+    stream: bool | None = False,
 ) -> ChatCompletionRequest:
     messages = []
     if system_msg:
@@ -112,14 +111,14 @@ def _make_context(team_id: str = "team-123", request_id: str = "req-abc") -> Mag
     return ctx
 
 
-def _unit_vector(dim: int, index: int = 0) -> List[float]:
+def _unit_vector(dim: int, index: int = 0) -> list[float]:
     """Return a unit vector with 1.0 at position index, 0.0 elsewhere."""
     v = [0.0] * dim
     v[index] = 1.0
     return v
 
 
-def _norm_vector(*values: float) -> List[float]:
+def _norm_vector(*values: float) -> list[float]:
     """Return the L2-normalized form of a list of floats."""
     magnitude = math.sqrt(sum(x * x for x in values))
     if magnitude == 0:
@@ -128,7 +127,7 @@ def _norm_vector(*values: float) -> List[float]:
 
 
 def _make_redis_hash(
-    embedding: List[float],
+    embedding: list[float],
     response: ChatCompletionResponse,
     config_hash: str,
 ) -> dict:
@@ -350,15 +349,15 @@ class TestOllamaEmbeddingClient:
 class TestSemanticCache:
     """Unit tests for SemanticCache using mocked Redis and embedding clients."""
 
-    def _make_embedding_client(self, vector: List[float]) -> AsyncMock:
+    def _make_embedding_client(self, vector: list[float]) -> AsyncMock:
         client = AsyncMock(spec=OllamaEmbeddingClient)
         client.embed = AsyncMock(return_value=vector)
         return client
 
     def _make_redis(
         self,
-        index_entries: Optional[List[str]] = None,
-        hash_data: Optional[dict] = None,
+        index_entries: list[str] | None = None,
+        hash_data: dict | None = None,
     ) -> AsyncMock:
         """Build a minimal async Redis mock."""
         redis = AsyncMock()

@@ -14,12 +14,12 @@ Tests:
 
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.rate_limit.team_limits import TeamRateLimit, TeamRateLimitService
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -45,8 +45,8 @@ def _make_rl_row(
     row.team_id = team_id
     row.requests_per_minute = rpm
     row.requests_per_hour = rph
-    row.created_at = datetime.now(timezone.utc)
-    row.updated_at = datetime.now(timezone.utc)
+    row.created_at = datetime.now(UTC)
+    row.updated_at = datetime.now(UTC)
     return row
 
 
@@ -152,7 +152,8 @@ async def test_custom_team_limit_enforced_over_global_default():
     receives the override value — not the global 500 rpm default.
     This verifies the override actually changes enforcement behavior.
     """
-    from app.services.chat_service import ChatService
+    from app.providers.registry import ProviderRegistry
+    from app.rate_limit.limiter import RateLimiter
     from app.schemas.chat import (
         ChatCompletionChoice,
         ChatCompletionRequest,
@@ -162,8 +163,7 @@ async def test_custom_team_limit_enforced_over_global_default():
         ResponseMetadata,
         UsageMetadata,
     )
-    from app.providers.registry import ProviderRegistry
-    from app.rate_limit.limiter import RateLimiter
+    from app.services.chat_service import ChatService
 
     registry = ProviderRegistry()
     mock_provider = MagicMock()
@@ -246,7 +246,8 @@ async def test_unset_team_uses_global_default_limit():
     """
     When no override row exists for a team, the global default limit is used.
     """
-    from app.services.chat_service import ChatService
+    from app.providers.registry import ProviderRegistry
+    from app.rate_limit.limiter import RateLimiter
     from app.schemas.chat import (
         ChatCompletionChoice,
         ChatCompletionRequest,
@@ -256,8 +257,7 @@ async def test_unset_team_uses_global_default_limit():
         ResponseMetadata,
         UsageMetadata,
     )
-    from app.providers.registry import ProviderRegistry
-    from app.rate_limit.limiter import RateLimiter
+    from app.services.chat_service import ChatService
 
     registry = ProviderRegistry()
     mock_provider = MagicMock()
@@ -338,7 +338,8 @@ async def test_db_failure_falls_back_to_global_default():
     When the team_rate_limit_service DB call raises an exception,
     the limiter should fail-open and use the global default — never block traffic.
     """
-    from app.services.chat_service import ChatService
+    from app.providers.registry import ProviderRegistry
+    from app.rate_limit.limiter import RateLimiter
     from app.schemas.chat import (
         ChatCompletionChoice,
         ChatCompletionRequest,
@@ -348,8 +349,7 @@ async def test_db_failure_falls_back_to_global_default():
         ResponseMetadata,
         UsageMetadata,
     )
-    from app.providers.registry import ProviderRegistry
-    from app.rate_limit.limiter import RateLimiter
+    from app.services.chat_service import ChatService
 
     registry = ProviderRegistry()
     mock_provider = MagicMock()
@@ -430,9 +430,10 @@ async def test_db_failure_falls_back_to_global_default():
 def test_rate_limits_member_cannot_set(monkeypatch):
     """Member role cannot set rate limit overrides (403)."""
     from fastapi.testclient import TestClient
-    from app.main import app
+
     from app.auth.dependencies import require_admin
     from app.auth.exceptions import AuthorizationError
+    from app.main import app
 
     app.dependency_overrides[require_admin] = lambda: (_ for _ in ()).throw(
         AuthorizationError("This operation requires admin privileges.")
@@ -458,9 +459,10 @@ def test_rate_limits_member_cannot_set(monkeypatch):
 def test_rate_limits_member_cannot_get(monkeypatch):
     """Member role cannot view rate limit overrides (403)."""
     from fastapi.testclient import TestClient
-    from app.main import app
+
     from app.auth.dependencies import require_admin
     from app.auth.exceptions import AuthorizationError
+    from app.main import app
 
     app.dependency_overrides[require_admin] = lambda: (_ for _ in ()).throw(
         AuthorizationError("This operation requires admin privileges.")

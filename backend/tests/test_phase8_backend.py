@@ -8,6 +8,7 @@ Tests for:
 
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,7 +16,6 @@ from fastapi.testclient import TestClient
 
 from app.auth.schemas import RequestContext
 from app.main import app
-
 
 # ── 1. GET /api/v1/auth/me ────────────────────────────────────────────────────
 
@@ -141,10 +141,11 @@ class TestAnalyticsRequestIdFilter:
 
     def test_request_id_filter_passes_through_to_service(self) -> None:
         """request_id= query param must be forwarded to the analytics service."""
-        from app.auth.dependencies import require_admin
-        from app.observability.analytics_service import AnalyticsService
-        from app.observability.analytics_schemas import RequestLogItem
         from datetime import datetime, timezone
+
+        from app.auth.dependencies import require_admin
+        from app.observability.analytics_schemas import RequestLogItem
+        from app.observability.analytics_service import AnalyticsService
 
         ctx = RequestContext(
             organization_id="org-f1",
@@ -178,7 +179,7 @@ class TestAnalyticsRequestIdFilter:
         mock_row.budget_action = None
         mock_row.error_code = None
         mock_row.trace_id = None
-        mock_row.created_at = datetime(2026, 9, 15, tzinfo=timezone.utc)
+        mock_row.created_at = datetime(2026, 9, 15, tzinfo=UTC)
 
         async def fake_list_requests(**kwargs):
             # Verify request_id was passed through

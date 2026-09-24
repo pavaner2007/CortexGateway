@@ -20,6 +20,7 @@ No real API credentials required.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,7 +28,6 @@ from fastapi.testclient import TestClient
 
 from app.auth.schemas import RequestContext
 from app.main import app
-
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -111,7 +111,7 @@ def _make_entry_mock(
     m.context_window = context_window
     m.baseline_latency_ms = baseline_latency_ms
     m.enabled = enabled
-    now = datetime(2026, 9, 18, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 18, 12, 0, 0, tzinfo=UTC)
     m.added_at = now
     m.updated_at = now
     return m
@@ -250,8 +250,9 @@ class TestModelRegistryRBAC:
 
     def test_member_create_returns_403(self) -> None:
         """Member key → 403 on create (require_admin enforces this)."""
-        from app.auth.dependencies import require_admin
         import fastapi
+
+        from app.auth.dependencies import require_admin
 
         def _member_forbidden():
             raise fastapi.HTTPException(
@@ -267,8 +268,9 @@ class TestModelRegistryRBAC:
 
     def test_member_list_returns_403(self) -> None:
         """Member key → 403 on list."""
-        from app.auth.dependencies import require_admin
         import fastapi
+
+        from app.auth.dependencies import require_admin
 
         def _member_forbidden():
             raise fastapi.HTTPException(
@@ -425,9 +427,9 @@ class TestCatalogIntegration:
         Phase 3 routing engine uses _shared_catalog (DB-backed).
         Verify get_routing_engine passes metadata_catalog=_shared_catalog.
         """
-        from app.routing.router import get_routing_engine, set_routing_engine
-        from app.routing.metadata import _shared_catalog
         from app.providers.registry import registry
+        from app.routing.metadata import _shared_catalog
+        from app.routing.router import get_routing_engine, set_routing_engine
 
         set_routing_engine(None)
         try:
@@ -441,8 +443,8 @@ class TestCatalogIntegration:
         CostCalculator uses _shared_catalog for pricing.
         Pre-load a known entry and verify non-zero cost.
         """
-        from app.routing.metadata import ModelMetadata, _shared_catalog
         from app.budget.cost import CostCalculator
+        from app.routing.metadata import ModelMetadata, _shared_catalog
         from app.schemas.chat import ChatCompletionRequest
 
         _shared_catalog._catalog["groq:test-9a-model"] = ModelMetadata(
@@ -472,8 +474,9 @@ class TestCatalogIntegration:
         ModelMetadataCatalog.load_from_db() populates in-memory dict from DB entries.
         """
         import asyncio
-        from app.routing.metadata import ModelMetadataCatalog
+
         from app.model_registry.service import ModelRegistryService
+        from app.routing.metadata import ModelMetadataCatalog
 
         entry = _make_entry_mock(
             "e1", "gemini", "gemini-1.5-flash",
@@ -601,15 +604,17 @@ class TestModelRegistrySchemas:
         assert data.capabilities.count("text") == 1
 
     def test_empty_capabilities_rejected(self) -> None:
-        from app.model_registry.schemas import ModelRegistryCreate
         from pydantic import ValidationError
+
+        from app.model_registry.schemas import ModelRegistryCreate
 
         with pytest.raises(ValidationError):
             ModelRegistryCreate(**{**_SAMPLE_CREATE, "capabilities": []})
 
     def test_unknown_capability_rejected(self) -> None:
-        from app.model_registry.schemas import ModelRegistryCreate
         from pydantic import ValidationError
+
+        from app.model_registry.schemas import ModelRegistryCreate
 
         with pytest.raises(ValidationError, match="Unknown capability"):
             ModelRegistryCreate(**{**_SAMPLE_CREATE, "capabilities": ["text", "hacking"]})
@@ -622,8 +627,9 @@ class TestModelRegistrySchemas:
         assert update.capabilities is None
 
     def test_update_extra_field_rejected(self) -> None:
-        from app.model_registry.schemas import ModelRegistryUpdate
         from pydantic import ValidationError
+
+        from app.model_registry.schemas import ModelRegistryUpdate
 
         # Use model_validate(dict) instead of a direct kwarg so Pylance does
         # not flag 'provider_override' as an unexpected keyword argument.

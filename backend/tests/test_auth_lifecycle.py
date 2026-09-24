@@ -20,7 +20,7 @@ And tests public endpoints remain unauthenticated.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -212,6 +212,8 @@ class TestChatAuthentication:
 
     def test_valid_key_reaches_chat_service(self, client: TestClient):
         """A valid key passes auth and reaches ChatService."""
+        from app.auth.dependencies import get_request_context
+        from app.database.session import get_db_dependency
         from app.schemas.chat import (
             ChatCompletionChoice,
             ChatCompletionResponse,
@@ -219,8 +221,6 @@ class TestChatAuthentication:
             ResponseMetadata,
             UsageMetadata,
         )
-        from app.auth.dependencies import get_request_context
-        from app.database.session import get_db_dependency
 
         mock_response = ChatCompletionResponse(
             provider="groq",
@@ -339,7 +339,7 @@ class TestRBAC:
         mock_key.role = "admin"
         mock_key.expires_at = None
         mock_key.revoked_at = None
-        mock_key.created_at = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        mock_key.created_at = datetime(2026, 9, 14, tzinfo=UTC)
         mock_key.last_used_at = None
 
         mock_service = AsyncMock()

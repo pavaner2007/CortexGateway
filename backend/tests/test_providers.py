@@ -35,7 +35,6 @@ from app.schemas.chat import (
     UsageMetadata,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_request(
