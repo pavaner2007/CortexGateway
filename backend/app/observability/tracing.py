@@ -30,12 +30,14 @@ Trace correlation:
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Generator
 
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+# opentelemetry imports are deferred inside each function.
+# This allows the module to be imported when opentelemetry is not installed
+# (CI / test environments where OTEL_ENABLED=false).
+
+_otel_logger = logging.getLogger("cortex.tracing")
 
 
 def init_tracing(
@@ -56,38 +58,48 @@ def init_tracing(
                        "http://otel-collector:4317". Empty = disabled.
     """
     if not enabled:
-        # No-op provider — trace() calls return non-recording spans.
-        trace.set_tracer_provider(trace.NoOpTracerProvider())
+        # No-op: install a non-recording tracer so get_tracer() always works.
+        # opentelemetry import is guarded — safe when package is absent.
+        try:
+            from opentelemetry import trace  # noqa: PLC0415
+            trace.set_tracer_provider(trace.NoOpTracerProvider())
+        except ModuleNotFoundError:
+            pass  # package absent — no-op is implicit, spans are never created
         return
+
+    from opentelemetry import trace  # noqa: PLC0415
+    from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter  # noqa: PLC0415
 
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
 
     if otlp_endpoint:
         try:
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # noqa: PLC0415
                 OTLPSpanExporter,
             )
             exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
             provider.add_span_processor(BatchSpanProcessor(exporter))
         except Exception as exc:  # pragma: no cover
-            # Collector unavailable or package issue → fall back to no-op quietly
-            import logging
-            logging.getLogger("cortex.tracing").warning(
-                "OTel OTLP exporter init failed; tracing disabled: %s", exc
-            )
+            _otel_logger.warning("OTel OTLP exporter init failed; tracing disabled: %s", exc)
             trace.set_tracer_provider(trace.NoOpTracerProvider())
             return
     else:
-        # No endpoint → console exporter for local debugging only
+        # No endpoint -> console exporter for local debugging only
         provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
 
     trace.set_tracer_provider(provider)
 
 
-def get_tracer() -> trace.Tracer:
-    """Return the module-scoped tracer."""
-    return trace.get_tracer("cortex.gateway")
+def get_tracer():
+    """Return the module-scoped tracer. Returns a no-op tracer if opentelemetry is absent."""
+    try:
+        from opentelemetry import trace  # noqa: PLC0415
+        return trace.get_tracer("cortex.gateway")
+    except ModuleNotFoundError:  # pragma: no cover
+        return _NoOpTracer()
 
 
 def get_current_trace_id() -> str | None:
@@ -96,15 +108,25 @@ def get_current_trace_id() -> str | None:
 
     Used to populate RequestLog.trace_id for cross-system correlation.
     """
-    span = trace.get_current_span()
-    ctx = span.get_span_context()
-    if ctx is None or not ctx.is_valid:
+    try:
+        from opentelemetry import trace  # noqa: PLC0415
+        span = trace.get_current_span()
+        ctx = span.get_span_context()
+        if ctx is None or not ctx.is_valid:
+            return None
+        return format(ctx.trace_id, "032x")
+    except ModuleNotFoundError:  # pragma: no cover
         return None
-    return format(ctx.trace_id, "032x")
+
+
+class _NoOpTracer:  # pragma: no cover
+    """Minimal no-op tracer used when opentelemetry is not installed."""
+    def start_as_current_span(self, name: str):
+        return contextlib.nullcontext(None)
 
 
 @contextlib.contextmanager
-def safe_span(name: str, **attributes) -> Generator[trace.Span, None, None]:
+def safe_span(name: str, **attributes) -> Generator:
     """
     Context manager that creates a child span and sets attributes.
 
@@ -124,9 +146,9 @@ def safe_span(name: str, **attributes) -> Generator[trace.Span, None, None]:
         span_ctx = tracer.start_as_current_span(name)
         span = span_ctx.__enter__()
     except Exception:  # pragma: no cover
-        # OTel span creation failed — yield a no-op span and continue
+        # OTel span creation failed or opentelemetry absent -- yield None and continue
         span_ctx = None
-        span = trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)
+        span = None
 
     # Set attributes — silently ignore any OTel errors here
     for key, value in attributes.items():
