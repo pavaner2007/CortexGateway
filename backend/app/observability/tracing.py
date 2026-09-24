@@ -70,7 +70,10 @@ def init_tracing(
     from opentelemetry import trace  # noqa: PLC0415
     from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
     from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import (  # noqa: PLC0415
+        BatchSpanProcessor,
+        ConsoleSpanExporter,
+    )
 
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
