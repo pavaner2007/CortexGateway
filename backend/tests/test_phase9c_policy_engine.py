@@ -522,6 +522,8 @@ class TestChatServicePolicyIntegration:
         budget.action from policy is used, not Budget.policy from DB.
         With WARN policy, BudgetExceeded is not raised even when over limit.
         """
+        from unittest.mock import patch
+
         from app.providers.registry import ProviderRegistry
         from app.services.chat_service import ChatService
 
@@ -541,7 +543,7 @@ class TestChatServicePolicyIntegration:
             )
         )
 
-        # Budget service returns a budget (WARN → reserve allowed, warning=True)
+        # Budget service returns a budget (WARN -> reserve allowed, warning=True)
         mock_budget_svc = AsyncMock()
         mock_budget_svc.check_and_reserve = AsyncMock(return_value=(MagicMock(), True))
         mock_budget_svc.reconcile = AsyncMock(return_value=MagicMock())
@@ -562,6 +564,13 @@ class TestChatServicePolicyIntegration:
 
         req = self._make_request(model="auto")
 
+        # Build a mock settings object with budget_enabled=True so this test
+        # is not affected by the BUDGET_ENABLED=false env var used in CI.
+        mock_settings = MagicMock()
+        mock_settings.budget_enabled = True
+        mock_settings.rate_limit_enabled = False
+        mock_settings.semantic_cache_enabled = False
+
         async def run():
             return await svc.complete(
                 req,
@@ -570,9 +579,12 @@ class TestChatServicePolicyIntegration:
                 budget_service=mock_budget_svc,
                 cost_calculator=mock_cost_calc,
                 resolved_policy=policy,
+                settings=mock_settings,
             )
 
         response = asyncio.get_event_loop().run_until_complete(run())
+
         # WARN does not raise; check_and_reserve was called
         mock_budget_svc.check_and_reserve.assert_called_once()
         assert response is not None
+
