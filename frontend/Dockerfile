@@ -44,8 +44,9 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Non-root setup: nginx worker runs as nginx user (alpine default).
 # Main process listens on 8080 (non-privileged port).
 # Required writable dirs for nginx temp files:
-RUN mkdir -p /var/cache/nginx /var/run /var/log/nginx \
-    && chown -R nginx:nginx /var/cache/nginx /var/run /var/log/nginx /usr/share/nginx/html \
+RUN touch /var/run/nginx.pid \
+    && mkdir -p /var/cache/nginx /var/run /var/log/nginx \
+    && chown -R nginx:nginx /var/run/nginx.pid /var/cache/nginx /var/run /var/log/nginx /usr/share/nginx/html \
     && chmod -R 755 /usr/share/nginx/html
 
 USER nginx
